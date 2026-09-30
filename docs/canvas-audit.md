@@ -1,8 +1,40 @@
 # 无限画布功能审计与补全调研
 
-> 范围：`apps/web`（tldraw 5.4.2 无限画布宿主）+ `packages/layer-core`（真源 `layers.json`）+ `/api`（`vite-plugin-layerforge-api.ts`）。
-> 方法：代码取证 + `logs/layerforge.log` 运行时证据 + `reference/*` 参考项目盘点 + Lovart / 开源同类对标。四轮：① 首轮全量（§1–§2）② 画布专项补充（§1.1 F6、§3.4）③ 分层工具对标（§4.1、§8）④ **范围裁剪**（「产品边界」节、§5 裁剪版批次、§9 一页纸）。
-> 状态：**P0（B0+B1+F4）已实施并验收**；产品交互在 P0 期间有定向调整（见 §10.1）。下一阶段 **P1-A 子集/组级合成**。日期：2026-09-30 → 实施 2026-10。
+> 范围：`apps/web`（**自研 DOM 无限画布**，已替换 tldraw）+ `packages/layer-core`（真源 `layers.json`）+ `/api`（`vite-plugin-layerforge-api.ts`）。
+> 方法：代码取证 + `logs/layerforge.log` 运行时证据 + `reference/*` 参考项目盘点 + Lovart / 开源同类对标。
+> 状态：**P0 + P1-A/B 已实施**；画布宿主为 `CanvasStage.tsx`（DOM 卡片 + CSS 视口，对齐 `editable-design`）。日期：2026-09-30 → 2026-10。
+
+## 实施纪律（改代码前必读 · 勿再犯）
+
+**画布宿主已定案：自研 DOM，不许退回 tldraw / xyflow。**  
+tldraw 授权水印、locked shape 语义、双击/快捷键收口都踩过坑；xyflow 用户已否决。参照：`reference/editable-design/.../layer-editor.js`（DOM 卡片）+ `reference/designjs/.../PanZoomWire.tsx`（视口）。
+
+### 改动前后必须跑的回归
+
+| 脚本 | 覆盖 |
+| --- | --- |
+| `python F:/LayerForge/.p0-layercore-check.py` | layer-core 10/10（含 opacity） |
+| `python F:/LayerForge/.p0-f5-decompose-check.py` | 换图连拆 |
+| `python F:/LayerForge/.p1a-compose-check.py` | 子集/组级 compose |
+| `node F:/LayerForge/.p0-canvas-check.mjs` | **画布 17 项**（见下） |
+
+`cd apps/web && npx tsc --noEmit -p tsconfig.json` 必须干净。  
+跑测前：`git restore -- projects/demo/layers.json`（验收会改 demo）。
+
+### 画布 17 项（`.p0-canvas-check.mjs`，缺一即回归）
+
+连线 · 空白左键不平移 · **框选** · 拖动 · **右键撤销移动** · 改名 · Ctrl+Z · 删除 · 打组 · 组卡合成预览 · 双击进组 · **组内单层工具条** · 解组 · 序号角标 · 按序纵向排布 · 吸附参考线 · 缩放工具条
+
+### 已踩过的坑（禁止重蹈）
+
+1. **名字/序号必须与卡片同一 DOM 节点**（`lf-card` 内），禁止独立 text shape / 浮层对齐——会延迟或脱开。
+2. **左键空白 = 框选**，不是平移；平移仅 **空格 / 中键**。工具条按钮不要被画布 pointerdown 抢走。
+3. **双击**用 pointerup 双击判定；原生 `dblclick` 会被拖拽捕获吞掉。组卡画面=进组，组名/层名=改名。
+4. **右键 = 撤销**（含拖动），`preventDefault` 挡浏览器菜单；拖动必须 `pushUndo`。
+5. **进组隔离时** `selGroup` 只表示「选中了组卡」，不能被 `enteredGroupId` 顶掉，否则组内单层无工具条。
+6. **SVG 连线**与卡片同一世界坐标原点（勿 `left:-2000` 偏移）。
+7. 空项目启动（`EMPTY_PROJECT`），fallback layers 会写回假几何。
+8. 产品否决项（勿做回）：Blend、独立合成预览卡、`window.prompt` 改名、tldraw/`persistenceKey`、双工具条、显示隐藏/不透明度滑杆（已删）。
 
 ---
 
@@ -457,11 +489,11 @@ app 级 undo/redo 事务化 · 单选/多选浮动工具条与尺寸读数 · �
 
 ### 10.2 已验证
 
-- `.p0-layercore-check.py` → **9/9**（跑前 `git restore projects/demo/layers.json`）
-- `tsc --noEmit` 干净；`npm run build` 通过
-- `.p0-canvas-check.mjs` → **9/9**：拖位持久 · 无僵尸/影子组 · 单工具条+删除落盘 · 组卡合成预览 · 卡片比例 · 组/解组无幽灵连线 · 序号角标+排序仅多选
-- 手测：源图拖动持久、双击进组/灰白隔离、双击改名、junction 解组、Ctrl+滚轮不缩放页面
-- ⚠️ 既有：`tsconfig.node.json` 缺 `@types/node`（不在 build 路径）
+- `.p0-layercore-check.py` → **10/10**
+- `.p0-f5-decompose-check.py` / `.p1a-compose-check.py` → PASS
+- `tsc --noEmit` 干净
+- `.p0-canvas-check.mjs` → **17/17**（见「实施纪律」清单）
+- 画布宿主：DOM 卡片（`e045b94` 起），非 tldraw
 
 ### 10.3 未完成
 
