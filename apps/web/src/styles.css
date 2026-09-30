@@ -550,11 +550,15 @@ button {
 .sel-tools .tool-group[data-group="align"] button {
   background: var(--surface);
 }
-.tl-watermark_SEE-LICENSE {
+/* tldraw unlicensed production badge — hide from canvas chrome */
+.tl-watermark_SEE-LICENSE,
+.tl-watermark_SEE-LICENSE button,
+[data-testid="watermark"],
+.tl-watermark {
+  display: none !important;
+  opacity: 0 !important;
   pointer-events: none !important;
-}
-.tl-watermark_SEE-LICENSE button {
-  pointer-events: none !important;
+  visibility: hidden !important;
 }
 .sel-tools .sel-count {
   font-size: 11px;

@@ -238,7 +238,10 @@ function RenameInput({
       }}
       onKeyDown={(e) => {
         e.stopPropagation();
-        if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+        if (e.key === "Enter") {
+          onCommit(e.currentTarget.value);
+          return;
+        }
         if (e.key === "Escape") onCancel();
       }}
     />
@@ -364,6 +367,44 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
       }
     },
     [cameraKey],
+  );
+
+  /** Move locked chips via store.put — updateShape() ignores locked shapes. */
+  const moveLocked = useCallback(
+    (editor: Editor, id: TLShapeId, patch: Partial<{ x: number; y: number; props: unknown; meta: unknown }>) => {
+      const cur = editor.getShape(id);
+      if (!cur) return;
+      editor.store.put([{ ...cur, ...patch } as typeof cur]);
+    },
+    [],
+  );
+
+  /** Keep name/badge chips glued to their card (they are sibling shapes). */
+  const followCards = useCallback(
+    (editor: Editor) => {
+      const move = (key: string, includeBadge: boolean) => {
+        const card = editor.getShape(imgId(key)) as TLImageShape | undefined;
+        if (!card) return;
+        const lx = card.x;
+        const ly = card.y + card.props.h + 6;
+        const label = editor.getShape(labelId(key)) as TLTextShape | undefined;
+        if (label && (Math.abs(label.x - lx) > 0.5 || Math.abs(label.y - ly) > 0.5)) {
+          moveLocked(editor, label.id, { x: lx, y: ly });
+        }
+        if (includeBadge) {
+          const bx = card.x + 8;
+          const by = card.y + 8;
+          const badge = editor.getShape(badgeId(key)) as TLTextShape | undefined;
+          if (badge && (Math.abs(badge.x - bx) > 0.5 || Math.abs(badge.y - by) > 0.5)) {
+            moveLocked(editor, badge.id, { x: bx, y: by });
+          }
+        }
+      };
+      move("source", false);
+      for (const layer of layersRef.current) move(layer.id, true);
+      for (const g of groupsRef.current) move(`group:${g.id}`, false);
+    },
+    [moveLocked],
   );
 
   const refreshHubs = useCallback(() => {
@@ -654,16 +695,18 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
               meta: { role, layerId: key, name: text },
             });
           } else {
-            editor.updateShape<TLTextShape>({
-              id,
-              type: "text",
-              x,
-              y,
-              isLocked: true,
-              opacity,
-              props,
-              meta: { role, layerId: key, name: text },
-            });
+            // locked shapes ignore updateShape — write the record directly
+            editor.store.put([
+              {
+                ...prev,
+                x,
+                y,
+                isLocked: true,
+                opacity,
+                props: { ...prev.props, ...props },
+                meta: { role, layerId: key, name: text },
+              },
+            ]);
           }
         };
 
@@ -913,6 +956,7 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
           if (!usedAssets.has(asset.id)) editor.deleteAssets([asset.id]);
         }
 
+        followCards(editor);
         window.setTimeout(() => refreshHubs(), 20);
         if (!didFitRef.current && (src || targets.length)) {
           const restored = restoreCamera(editor);
@@ -1132,6 +1176,7 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
           // Pointer-up is the reliable drag-end signal (store debounce alone missed some drags).
           const onPointerUp = () => {
             if (syncingRef.current) return;
+            followCards(editor);
             scheduleLayoutSave();
           };
           editor.getContainer().addEventListener("pointerup", onPointerUp);
@@ -1142,6 +1187,7 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
             if (raf) return;
             raf = window.requestAnimationFrame(() => {
               raf = 0;
+              followCards(editor);
               refreshHubs();
               refreshSelection(editor);
               onZoom?.(editor.getCamera().z);

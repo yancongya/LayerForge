@@ -134,6 +134,11 @@ export default function App() {
       setStatus({ kind: "err", text: err instanceof Error ? err.message : String(err) });
     }
   };
+
+  const onUndoRef = useRef(onUndo);
+  onUndoRef.current = onUndo;
+  const onRedoRef = useRef(onRedo);
+  onRedoRef.current = onRedo;
   const fileRef = useRef<HTMLInputElement>(null);
   const canvasApi = useRef<CanvasApi>(null);
 
@@ -245,11 +250,11 @@ export default function App() {
       }
       if (e.key === "z" || e.key === "Z") {
         e.preventDefault();
-        void (e.shiftKey ? onRedo() : onUndo());
+        void (e.shiftKey ? onRedoRef.current() : onUndoRef.current());
       }
       if (e.key === "y" || e.key === "Y") {
         e.preventDefault();
-        void onRedo();
+        void onRedoRef.current();
       }
     };
     // passive:false is required for preventDefault on wheel; capture wins over UI handlers.
