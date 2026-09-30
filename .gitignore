@@ -13,6 +13,11 @@ logs/
 *.log
 .DS_Store
 
+# python + scratch
+__pycache__/
+*.pyc
+.tmp-lf-test/
+
 # generated project outputs
 projects/*/dist/
 projects/*/dist-mcp/

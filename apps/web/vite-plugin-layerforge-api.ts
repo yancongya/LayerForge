@@ -14,8 +14,36 @@ const PROJECTS_ROOT = path.join(REPO_ROOT, "projects");
 const LAYER_CORE = path.join(REPO_ROOT, "packages", "layer-core");
 const PYTHON = process.env.MIMO_PYTHON || process.env.PYTHON || "python";
 
-type Layer = { id: string; name: string; file: string; order: number; groupId?: string | null };
-type Group = { id: string; name: string; order: number; memberIds: string[]; collapsed?: boolean };
+type Layer = {
+  id: string;
+  name: string;
+  file: string;
+  order: number;
+  groupId?: string | null;
+  /** Canvas layout only — never read by compose. */
+  x?: number;
+  y?: number;
+  w?: number;
+  h?: number;
+  /** Natural PNG size, measured by layer-core when absent. */
+  imgW?: number;
+  imgH?: number;
+  visible?: boolean;
+  locked?: boolean;
+};
+type Group = {
+  id: string;
+  name: string;
+  order: number;
+  memberIds: string[];
+  collapsed?: boolean;
+  x?: number;
+  y?: number;
+  w?: number;
+  h?: number;
+  imgW?: number;
+  imgH?: number;
+};
 
 function projectDir(id: string) {
   if (!/^[\w.-]+$/.test(id)) {
@@ -26,11 +54,12 @@ function projectDir(id: string) {
   return dir;
 }
 
-function readDocument(projectId: string): { layers: Layer[]; groups: Group[] } {
+function readDocument(projectId: string): { layers: Layer[]; groups: Group[]; rev: number } {
   const file = path.join(projectDir(projectId), "layers.json");
   const raw = JSON.parse(fs.readFileSync(file, "utf8")) as {
     layers: Layer[];
     groups?: Group[];
+    rev?: number;
   };
   const layers = [...raw.layers]
     .sort((a, b) => a.order - b.order || a.id.localeCompare(b.id))
@@ -38,7 +67,7 @@ function readDocument(projectId: string): { layers: Layer[]; groups: Group[] } {
   const groups = [...(raw.groups || [])]
     .sort((a, b) => a.order - b.order || a.id.localeCompare(b.id))
     .map((g) => ({ ...g, collapsed: Boolean(g.collapsed) }));
-  return { layers, groups };
+  return { layers, groups, rev: Number(raw.rev) || 0 };
 }
 
 function readLayers(projectId: string): Layer[] {
@@ -131,7 +160,9 @@ function projectPayload(id: string) {
   const doc = readDocument(id);
   const layers = doc.layers.map((layer) => ({
     ...layer,
-    url: `/projects/${id}/${layer.file.replace(/\\/g, "/")}`,
+    // `?v=<rev>` busts the browser cache when a re-decompose rewrites the same
+    // filename (fixes F5) while still letting unchanged PNGs hit the cache.
+    url: `/projects/${id}/${layer.file.replace(/\\/g, "/")}?v=${doc.rev}`,
   }));
   const compositeFile = path.join(dir, "composite.png");
   const sourceFile = ["source.png", "source.jpg", "source.jpeg", "source.webp"]
@@ -139,6 +170,7 @@ function projectPayload(id: string) {
     .find((p) => fs.existsSync(p));
   return {
     id,
+    rev: doc.rev,
     root: path.relative(REPO_ROOT, dir).replace(/\\/g, "/"),
     layers,
     groups: doc.groups,
@@ -215,7 +247,7 @@ export function layerforgeApi(): Plugin {
             return;
           }
 
-          const match = url.match(/^\/projects\/([^/]+)(?:\/([a-z]+))?$/);
+          const match = url.match(/^\/projects\/([^/]+)(?:\/([a-z][a-z-]*))?$/);
           if (match) {
             const id = match[1];
             const action = match[2] || "get";
@@ -292,6 +324,106 @@ export function layerforgeApi(): Plugin {
               const result = await runLayerCore(args);
               if (!result.ok) {
                 json(res, 500, { error: result.stderr || result.stdout || "collapse failed" });
+                return;
+              }
+              json(res, 200, projectPayload(id));
+              return;
+            }
+
+            if (method === "POST" && (action === "rename" || action === "rename-group")) {
+              const body = JSON.parse((await readBody(req)) || "{}") as {
+                id?: string;
+                group_id?: string;
+                name?: string;
+              };
+              const name = (body.name || "").trim();
+              const target = action === "rename" ? body.id : body.group_id;
+              if (!target) {
+                json(res, 400, { error: action === "rename" ? "id required" : "group_id required" });
+                return;
+              }
+              if (!name) {
+                json(res, 400, { error: "name required" });
+                return;
+              }
+              const result = await runLayerCore([action, projectDir(id), String(target), name]);
+              if (!result.ok) {
+                json(res, 500, { error: result.stderr || result.stdout || `${action} failed` });
+                return;
+              }
+              json(res, 200, projectPayload(id));
+              return;
+            }
+
+            if (method === "POST" && action === "delete") {
+              const body = JSON.parse((await readBody(req)) || "{}") as { id?: string };
+              if (!body.id) {
+                json(res, 400, { error: "id required" });
+                return;
+              }
+              const result = await runLayerCore(["delete", projectDir(id), String(body.id)]);
+              if (!result.ok) {
+                json(res, 500, { error: result.stderr || result.stdout || "delete failed" });
+                return;
+              }
+              json(res, 200, projectPayload(id));
+              return;
+            }
+
+            if (method === "POST" && action === "flag") {
+              const body = JSON.parse((await readBody(req)) || "{}") as {
+                id?: string;
+                visible?: boolean;
+                locked?: boolean;
+              };
+              if (!body.id) {
+                json(res, 400, { error: "id required" });
+                return;
+              }
+              if (typeof body.visible !== "boolean" && typeof body.locked !== "boolean") {
+                json(res, 400, { error: "visible or locked required" });
+                return;
+              }
+              const args = ["flag", projectDir(id), String(body.id)];
+              if (typeof body.visible === "boolean") args.push("--visible", body.visible ? "1" : "0");
+              if (typeof body.locked === "boolean") args.push("--locked", body.locked ? "1" : "0");
+              const result = await runLayerCore(args);
+              if (!result.ok) {
+                json(res, 500, { error: result.stderr || result.stdout || "flag failed" });
+                return;
+              }
+              json(res, 200, projectPayload(id));
+              return;
+            }
+
+            if (method === "POST" && action === "layout") {
+              const body = JSON.parse((await readBody(req)) || "{}") as {
+                layers?: Array<{ id?: string; x?: number; y?: number; w?: number; h?: number }>;
+                groups?: Array<{ id?: string; x?: number; y?: number; w?: number; h?: number }>;
+              };
+              const pick = (list: typeof body.layers) =>
+                (list || [])
+                  .filter((item) => item && typeof item.id === "string")
+                  .map((item) => ({
+                    id: item.id,
+                    x: Number(item.x) || 0,
+                    y: Number(item.y) || 0,
+                    ...(Number(item.w) > 0 ? { w: Number(item.w) } : {}),
+                    ...(Number(item.h) > 0 ? { h: Number(item.h) } : {}),
+                  }));
+              const layers = pick(body.layers);
+              const groups = pick(body.groups);
+              if (!layers.length && !groups.length) {
+                json(res, 400, { error: "no layout items" });
+                return;
+              }
+              const result = await runLayerCore([
+                "layout",
+                projectDir(id),
+                JSON.stringify({ layers, groups }),
+              ]);
+              if (!result.ok) {
+                json(res, 500, { error: result.stderr || result.stdout || "layout failed" });
                 return;
               }
               json(res, 200, projectPayload(id));

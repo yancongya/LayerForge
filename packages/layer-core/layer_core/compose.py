@@ -12,7 +12,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from .layers import Layer, sort_layers_bottom_to_top
+from .layers import Layer, LayersError, visible_layers
 
 
 def _load_rgba(path: Path) -> Image.Image:
@@ -39,8 +39,11 @@ def _align_height(images: list[Image.Image]) -> list[Image.Image]:
 
 
 def compose_layers(project_root: Path | str, layers: list[Layer]) -> Image.Image:
+    """Stack the *visible* layers bottom→top. Canvas x/y/w/h is deliberately ignored."""
     root = Path(project_root)
-    ordered = sort_layers_bottom_to_top(layers)
+    ordered = visible_layers(layers)
+    if not ordered:
+        raise LayersError("no visible layers to compose")
     images = [_load_rgba(layer.resolved_path(root)) for layer in ordered]
     images = _align_height(images)
     combined = images[0]

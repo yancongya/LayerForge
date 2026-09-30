@@ -7,6 +7,10 @@ Examples:
   python -m layer_core.cli group projects/demo mid,fg --name "Content"
   python -m layer_core.cli ungroup projects/demo g1
   python -m layer_core.cli compose projects/demo
+  python -m layer_core.cli rename projects/demo bg "Background plate"
+  python -m layer_core.cli flag projects/demo bg --visible 0
+  python -m layer_core.cli delete projects/demo fg
+  python -m layer_core.cli layout projects/demo '{"layers":[{"id":"bg","x":0,"y":0}]}'
   python -m layer_core.cli export projects/demo --out projects/demo/dist
 """
 
@@ -15,6 +19,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from dataclasses import asdict
 from pathlib import Path
 
 from .compose import compose_project
@@ -22,37 +27,25 @@ from .decompose import mock_decompose
 from .export import export_layers
 from .layers import (
     LayersError,
+    apply_layout,
+    delete_layer,
     group_layers,
     load_layers_document,
+    rename_group,
+    rename_layer,
     reorder_layers,
     save_layers_document,
     set_group_collapsed,
+    set_layer_flags,
     ungroup_layers,
 )
 
 
 def _doc_payload(doc) -> dict:
     return {
-        "layers": [
-            {
-                "id": layer.id,
-                "name": layer.name,
-                "file": layer.file,
-                "order": layer.order,
-                "groupId": layer.groupId,
-            }
-            for layer in doc.sorted_layers()
-        ],
-        "groups": [
-            {
-                "id": g.id,
-                "name": g.name,
-                "order": g.order,
-                "memberIds": g.memberIds,
-                "collapsed": g.collapsed,
-            }
-            for g in doc.sorted_groups()
-        ],
+        "rev": doc.rev,
+        "layers": [asdict(layer) for layer in doc.sorted_layers()],
+        "groups": [asdict(group) for group in doc.sorted_groups()],
     }
 
 
@@ -109,6 +102,61 @@ def _cmd_collapse(project: Path, group_id: str, collapsed: bool) -> int:
     return 0
 
 
+def _cmd_rename(project: Path, layer_id: str, name: str) -> int:
+    doc = load_layers_document(project)
+    save_layers_document(project, rename_layer(doc, layer_id, name))
+    print(json.dumps({"renamed": layer_id, "name": name}, ensure_ascii=False))
+    return 0
+
+
+def _cmd_rename_group(project: Path, group_id: str, name: str) -> int:
+    doc = load_layers_document(project)
+    save_layers_document(project, rename_group(doc, group_id, name))
+    print(json.dumps({"renamed": group_id, "name": name}, ensure_ascii=False))
+    return 0
+
+
+def _cmd_delete(project: Path, layer_id: str) -> int:
+    doc = load_layers_document(project)
+    save_layers_document(project, delete_layer(doc, layer_id))
+    print(json.dumps({"deleted": layer_id}, ensure_ascii=False))
+    return 0
+
+
+def _flag(value: str | None) -> bool | None:
+    if value is None:
+        return None
+    return value.strip().lower() in ("1", "true", "yes", "on")
+
+
+def _cmd_flag(project: Path, layer_id: str, visible: str | None, locked: str | None) -> int:
+    if visible is None and locked is None:
+        raise LayersError("flag requires --visible and/or --locked")
+    doc = load_layers_document(project)
+    save_layers_document(
+        project, set_layer_flags(doc, layer_id, visible=_flag(visible), locked=_flag(locked))
+    )
+    print(json.dumps({"flagged": layer_id, "visible": visible, "locked": locked}, ensure_ascii=False))
+    return 0
+
+
+def _cmd_layout(project: Path, patches_json: str) -> int:
+    try:
+        patches = json.loads(patches_json)
+    except json.JSONDecodeError as exc:
+        raise LayersError(f"invalid layout JSON: {exc}") from exc
+    if not isinstance(patches, dict):
+        raise LayersError('layout JSON must be {"layers": [...], "groups": [...]}')
+    layer_patches = patches.get("layers") or []
+    group_patches = patches.get("groups") or []
+    if not isinstance(layer_patches, list) or not isinstance(group_patches, list):
+        raise LayersError("layout 'layers'/'groups' must be arrays")
+    doc = load_layers_document(project)
+    save_layers_document(project, apply_layout(doc, layer_patches, group_patches))
+    print(json.dumps({"placed": len(layer_patches) + len(group_patches)}))
+    return 0
+
+
 def _cmd_export(project: Path, out_dir: Path, formats: list[str]) -> int:
     doc = load_layers_document(project)
     created = export_layers(project, doc.layers, out_dir, formats=tuple(formats))
@@ -151,6 +199,30 @@ def build_parser() -> argparse.ArgumentParser:
     p_col.add_argument("group_id")
     p_col.add_argument("--open", action="store_true", help="expand instead of collapse")
 
+    p_ren = sub.add_parser("rename", help="Persist a layer rename")
+    p_ren.add_argument("project", type=Path)
+    p_ren.add_argument("layer_id")
+    p_ren.add_argument("name")
+
+    p_reng = sub.add_parser("rename-group", help="Persist a group rename")
+    p_reng.add_argument("project", type=Path)
+    p_reng.add_argument("group_id")
+    p_reng.add_argument("name")
+
+    p_del = sub.add_parser("delete", help="Delete a layer (renumber order, dissolve short groups)")
+    p_del.add_argument("project", type=Path)
+    p_del.add_argument("layer_id")
+
+    p_flag = sub.add_parser("flag", help="Set a layer's visible / locked flag")
+    p_flag.add_argument("project", type=Path)
+    p_flag.add_argument("layer_id")
+    p_flag.add_argument("--visible", default=None)
+    p_flag.add_argument("--locked", default=None)
+
+    p_layout = sub.add_parser("layout", help="Persist canvas x/y/w/h patches (compose ignores them)")
+    p_layout.add_argument("project", type=Path)
+    p_layout.add_argument("patches", help='JSON: {"layers":[{"id","x","y","w","h"}],"groups":[...]}')
+
     p_export = sub.add_parser("export", help="Export png-seq / zip / composite")
     p_export.add_argument("project", type=Path)
     p_export.add_argument("--out", type=Path, required=True)
@@ -176,6 +248,16 @@ def main(argv: list[str] | None = None) -> int:
             return _cmd_ungroup(args.project, args.group_id)
         if args.command == "collapse":
             return _cmd_collapse(args.project, args.group_id, collapsed=not args.open)
+        if args.command == "rename":
+            return _cmd_rename(args.project, args.layer_id, args.name)
+        if args.command == "rename-group":
+            return _cmd_rename_group(args.project, args.group_id, args.name)
+        if args.command == "delete":
+            return _cmd_delete(args.project, args.layer_id)
+        if args.command == "flag":
+            return _cmd_flag(args.project, args.layer_id, args.visible, args.locked)
+        if args.command == "layout":
+            return _cmd_layout(args.project, args.patches)
         if args.command == "export":
             formats = [item.strip() for item in args.formats.split(",") if item.strip()]
             return _cmd_export(args.project, args.out, formats)

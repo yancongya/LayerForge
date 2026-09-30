@@ -2,6 +2,7 @@ import type { ProjectPayload } from "./types";
 
 export const FALLBACK_PROJECT: ProjectPayload = {
   id: "demo",
+  rev: 0,
   root: "projects/demo",
   layers: [
     {

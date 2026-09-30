@@ -11,7 +11,36 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFilter
 
-from .layers import Layer, ProjectLayers, save_layers_document
+from .layers import (
+    Layer,
+    LayersError,
+    ProjectLayers,
+    card_size,
+    load_layers_document,
+    save_layers_document,
+)
+
+#: Horizontal gap between cards on first placement (canvas page units).
+CARD_GAP = 80
+
+
+def _place_cards(specs: list[Layer], img_w: int, img_h: int) -> None:
+    """Initial canvas layout: one top row, ``x`` = previous right edge + gap, ``y`` pinned to 0.
+
+    Adapted from ``reference/designjs/.../canvas/artboards.ts`` ``findPlacement``, which
+    pins ``y`` precisely because following the previous card's ``y`` causes vertical drift
+    and overlapping stacks. Card size keeps the image aspect (no more fixed 3:4).
+    """
+    card_w, card_h = card_size(img_w, img_h)
+    x = 0.0
+    for layer in specs:
+        layer.imgW = img_w
+        layer.imgH = img_h
+        layer.w = card_w
+        layer.h = card_h
+        layer.x = x
+        layer.y = 0.0
+        x += card_w + CARD_GAP
 
 
 def mock_decompose(
@@ -103,5 +132,12 @@ def mock_decompose(
     if layer_count >= 4:
         specs.append(Layer(id="spark", name="Spark", file="layers/spark.png", order=3))
 
-    save_layers_document(root, ProjectLayers(layers=specs, groups=[]))
+    _place_cards(specs, w, h)
+    # Re-decomposing must not rewind `rev`, or the two writers (web API / MCP) lose
+    # the only signal they have that the file changed underneath them.
+    try:
+        prev_rev = load_layers_document(root).rev
+    except LayersError:
+        prev_rev = 0
+    save_layers_document(root, ProjectLayers(layers=specs, groups=[], rev=prev_rev))
     return specs
