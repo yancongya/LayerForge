@@ -15,6 +15,8 @@ export type Layer = {
   imgH?: number;
   visible?: boolean;
   locked?: boolean;
+  /** 0–1, default 1. Compose multiplies this layer's alpha. */
+  opacity?: number;
 };
 
 export type LayerGroup = {

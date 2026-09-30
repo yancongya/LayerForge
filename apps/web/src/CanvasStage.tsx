@@ -13,6 +13,7 @@ import {
   TLUiActionsContextType,
   TLUiOverrides,
   TLUiToolsContextType,
+  DefaultMinimap,
   Tldraw,
   createShapeId,
   toRichText,
@@ -47,9 +48,10 @@ type Props = {
   onRename?: (layerId: string, name: string) => void;
   onRenameGroup?: (groupId: string, name: string) => void;
   onDeleteLayer?: (layerId: string) => void;
-  onSetFlags?: (layerId: string, flags: { visible?: boolean; locked?: boolean }) => void;
+  onSetFlags?: (layerId: string, flags: { visible?: boolean; locked?: boolean; opacity?: number }) => void;
   onSaveLayout?: (layers: LayoutItem[], groups: LayoutItem[]) => void;
   onZoom?: (z: number) => void;
+  showMinimap?: boolean;
 };
 
 /** Actions that must stay (selection / viewport / read-only export). Everything else is dropped. */
@@ -186,6 +188,7 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
     onSetFlags,
     onSaveLayout,
     onZoom,
+    showMinimap = true,
   },
   ref,
 ) {
@@ -576,7 +579,8 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
             }
             noteBox(x, box.w);
             const dim = c.dim;
-            const baseOp = layer.visible === false ? 0.35 : 1;
+            const baseOp =
+              (layer.visible === false ? 0.35 : 1) * Math.max(0, Math.min(1, layer.opacity ?? 1));
             upsert(
               layer.id,
               "layer",
@@ -907,6 +911,7 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
           ImageToolbar: () => null,
           VideoToolbar: () => null,
           RichTextToolbar: () => null,
+          Minimap: showMinimap ? DefaultMinimap : () => null,
           // Do NOT override ContextMenu with () => null: in tldraw 5.4.2 the default
           // ContextMenu is what wraps <Canvas />. A null component hides the whole board.
         }}
@@ -1188,6 +1193,22 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
               >
                 {layersRef.current.find((l) => l.id === selLayers[0])?.locked ? "🔒" : "🔓"}
               </button>
+              <input
+                type="range"
+                className="opacity-slider"
+                title="不透明度"
+                min={0}
+                max={100}
+                value={Math.round(
+                  (layersRef.current.find((l) => l.id === selLayers[0])?.opacity ?? 1) * 100,
+                )}
+                onChange={(e) => {
+                  const id = selLayers[0];
+                  const layer = layersRef.current.find((l) => l.id === id);
+                  if (!layer) return;
+                  onSetFlags?.(id, { opacity: Number(e.currentTarget.value) / 100 });
+                }}
+              />
               <button
                 type="button"
                 title="删除此层"

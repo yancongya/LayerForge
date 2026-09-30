@@ -383,18 +383,25 @@ export function layerforgeApi(): Plugin {
                 id?: string;
                 visible?: boolean;
                 locked?: boolean;
+                opacity?: number;
               };
               if (!body.id) {
                 json(res, 400, { error: "id required" });
                 return;
               }
-              if (typeof body.visible !== "boolean" && typeof body.locked !== "boolean") {
-                json(res, 400, { error: "visible or locked required" });
+              const hasOpacity = typeof body.opacity === "number";
+              if (
+                typeof body.visible !== "boolean" &&
+                typeof body.locked !== "boolean" &&
+                !hasOpacity
+              ) {
+                json(res, 400, { error: "visible, locked, or opacity required" });
                 return;
               }
               const args = ["flag", projectDir(id), String(body.id)];
               if (typeof body.visible === "boolean") args.push("--visible", body.visible ? "1" : "0");
               if (typeof body.locked === "boolean") args.push("--locked", body.locked ? "1" : "0");
+              if (hasOpacity) args.push("--opacity", String(body.opacity));
               const result = await runLayerCore(args);
               if (!result.ok) {
                 json(res, 500, { error: result.stderr || result.stdout || "flag failed" });

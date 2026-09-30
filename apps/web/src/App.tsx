@@ -47,6 +47,9 @@ export default function App() {
   const [pendingDataUrl, setPendingDataUrl] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [zoomPct, setZoomPct] = useState(100);
+  const [showHelp, setShowHelp] = useState(false);
+  const [showMinimap, setShowMinimap] = useState(true);
+  const dragLayerId = useRef<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const canvasApi = useRef<CanvasApi>(null);
 
@@ -280,7 +283,10 @@ export default function App() {
     }
   };
 
-  const onSetFlags = async (id: string, flags: { visible?: boolean; locked?: boolean }) => {
+  const onSetFlags = async (
+    id: string,
+    flags: { visible?: boolean; locked?: boolean; opacity?: number },
+  ) => {
     try {
       const data = await setLayerFlags(project.id, id, flags);
       applyProject(data);
@@ -424,6 +430,7 @@ export default function App() {
             onSetFlags={(id, flags) => void onSetFlags(id, flags)}
             onSaveLayout={(ls, gs) => void onSaveLayout(ls, gs)}
             onZoom={(z) => setZoomPct(Math.round(z * 100))}
+            showMinimap={showMinimap}
           />
         </div>
 
@@ -445,7 +452,41 @@ export default function App() {
           <button type="button" title="放大" onClick={() => canvasApi.current?.zoomIn()}>
             +
           </button>
+          <button
+            type="button"
+            title="快捷键"
+            onClick={() => setShowHelp((v) => !v)}
+          >
+            ?
+          </button>
+          <button
+            type="button"
+            title="缩略图"
+            className={showMinimap ? "on" : ""}
+            onClick={() => setShowMinimap((v) => !v)}
+          >
+            ◫
+          </button>
         </div>
+
+        {showHelp && (
+          <div className="help-panel">
+            <div className="help-head">
+              <strong>快捷键</strong>
+              <button type="button" onClick={() => setShowHelp(false)}>
+                ✕
+              </button>
+            </div>
+            <ul>
+              <li><kbd>双击名字</kbd> 改名</li>
+              <li><kbd>双击组卡</kbd> 进入组内 · <kbd>Esc</kbd> 退出</li>
+              <li><kbd>↑↓←→</kbd> 微调选中（<kbd>Shift</kbd> ×10）</li>
+              <li><kbd>Ctrl+0</kbd> 100% · <kbd>Ctrl+滚轮</kbd> 画布缩放</li>
+              <li><kbd>Ctrl+A</kbd> 全选 · 多选工具条：倒序 / 排布 / 对齐 / 打组</li>
+              <li><kbd>解组点</kbd>（组卡左侧）解组</li>
+            </ul>
+          </div>
+        )}
 
         {!layers.length && (
           <div className="canvas-hint">
@@ -509,6 +550,39 @@ export default function App() {
                           <div
                             key={m.id}
                             className="map-node child-node clickable"
+                            draggable
+                            onDragStart={() => {
+                              dragLayerId.current = m.id;
+                            }}
+                            onDragOver={(e) => e.preventDefault()}
+                            onDrop={(e) => {
+                              e.preventDefault();
+                              const from = dragLayerId.current;
+                              if (!from || from === m.id) return;
+                              const ids = layers.map((l) => l.id);
+                              const fi = ids.indexOf(from);
+                              const ti = ids.indexOf(m.id);
+                              if (fi < 0 || ti < 0) return;
+                              const next = ids.slice();
+                              next.splice(fi, 1);
+                              next.splice(ti, 0, from);
+                              dragLayerId.current = null;
+                              void (async () => {
+                                setBusy(true);
+                                try {
+                                  const data = await reorderLayers(project.id, next);
+                                  applyProject(data);
+                                  setStatus({ kind: "ok", text: "已调序" });
+                                } catch (err) {
+                                  setStatus({
+                                    kind: "err",
+                                    text: err instanceof Error ? err.message : String(err),
+                                  });
+                                } finally {
+                                  setBusy(false);
+                                }
+                              })();
+                            }}
                             onClick={() => canvasApi.current?.selectLayer(m.id)}
                           >
                             <div
@@ -536,6 +610,39 @@ export default function App() {
                     <div
                       key={layer.id}
                       className="map-node layer-node clickable"
+                      draggable
+                      onDragStart={() => {
+                        dragLayerId.current = layer.id;
+                      }}
+                      onDragOver={(e) => e.preventDefault()}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        const from = dragLayerId.current;
+                        if (!from || from === layer.id) return;
+                        const ids = layers.map((l) => l.id);
+                        const fi = ids.indexOf(from);
+                        const ti = ids.indexOf(layer.id);
+                        if (fi < 0 || ti < 0) return;
+                        const next = ids.slice();
+                        next.splice(fi, 1);
+                        next.splice(ti, 0, from);
+                        dragLayerId.current = null;
+                        void (async () => {
+                          setBusy(true);
+                          try {
+                            const data = await reorderLayers(project.id, next);
+                            applyProject(data);
+                            setStatus({ kind: "ok", text: "已调序" });
+                          } catch (err) {
+                            setStatus({
+                              kind: "err",
+                              text: err instanceof Error ? err.message : String(err),
+                            });
+                          } finally {
+                            setBusy(false);
+                          }
+                        })();
+                      }}
                       onClick={() => canvasApi.current?.selectLayer(layer.id)}
                     >
                       <div className="thumb" style={{ backgroundImage: `url(${layer.url})` }} />

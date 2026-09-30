@@ -115,7 +115,7 @@ export function deleteLayer(id: string, layerId: string) {
 export function setLayerFlags(
   id: string,
   layerId: string,
-  flags: { visible?: boolean; locked?: boolean },
+  flags: { visible?: boolean; locked?: boolean; opacity?: number },
 ) {
   return request<ProjectPayload>(`/api/projects/${encodeURIComponent(id)}/flag`, {
     method: "POST",

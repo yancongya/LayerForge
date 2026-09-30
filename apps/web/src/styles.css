@@ -1094,3 +1094,53 @@ button {
 .order-badge.dim {
   opacity: 0.35;
 }
+
+.help-panel {
+  position: absolute;
+  right: 16px;
+  bottom: 64px;
+  z-index: 12;
+  width: 280px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.98);
+  border: 1px solid var(--line);
+  box-shadow: 0 12px 32px rgba(24, 24, 27, 0.12);
+  font-size: 12px;
+  color: var(--ink-2);
+}
+.help-panel .help-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.help-panel ul {
+  margin: 0;
+  padding-left: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.help-panel kbd {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  font-size: 11px;
+  color: var(--ink);
+}
+.zoom-tools button.on {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+.sel-tools .opacity-slider {
+  width: 64px;
+  height: 30px;
+  padding: 0 4px;
+  accent-color: var(--accent);
+}
