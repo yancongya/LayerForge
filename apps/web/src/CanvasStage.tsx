@@ -124,6 +124,15 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
   const panRef = useRef<{ x: number; y: number; vx: number; vy: number } | null>(null);
   const spaceRef = useRef(false);
   const [cardPos, setCardPos] = useState<Record<string, { x: number; y: number }>>({});
+  const [marquee, setMarquee] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+  const marqueeRef = useRef<{
+    x0: number;
+    y0: number;
+    x1: number;
+    y1: number;
+    additive: boolean;
+  } | null>(null);
+  const [guides, setGuides] = useState<Array<{ x1: number; y1: number; x2: number; y2: number }>>([]);
 
   const camKey = `lf:cam:${projectId}`;
   const srcKey = `lf:srcpos:${projectId}`;
@@ -435,10 +444,20 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
         return;
       }
       const cardEl = target.closest("[data-lf-card]") as HTMLElement | null;
-      // Pan only with space / middle button. Left-click empty = deselect, not pan.
+      // Pan only with space / middle button. Left-drag empty = marquee select.
       const isPan = spaceRef.current || e.button === 1;
       if (!isPan && !cardEl && e.button === 0) {
-        setSelected([]);
+        const w = toWorld(e.clientX, e.clientY);
+        marqueeRef.current = {
+          x0: w.x,
+          y0: w.y,
+          x1: w.x,
+          y1: w.y,
+          additive: e.shiftKey || e.metaKey || e.ctrlKey,
+        };
+        setMarquee({ x: w.x, y: w.y, w: 0, h: 0 });
+        if (!marqueeRef.current.additive) setSelected([]);
+        el.setPointerCapture(e.pointerId);
         return;
       }
       if (isPan) {
@@ -486,24 +505,88 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
         }));
         return;
       }
+      const m = marqueeRef.current;
+      if (m) {
+        const w = toWorld(e.clientX, e.clientY);
+        m.x1 = w.x;
+        m.y1 = w.y;
+        const x = Math.min(m.x0, m.x1);
+        const y = Math.min(m.y0, m.y1);
+        const bw = Math.abs(m.x1 - m.x0);
+        const bh = Math.abs(m.y1 - m.y0);
+        setMarquee({ x, y, w: bw, h: bh });
+        const hit = viewCardsRef.current
+          .filter((c) => {
+            if (c.locked && c.kind === "source") return false;
+            return !(c.x + c.w < x || c.x > x + bw || c.y + c.h < y || c.y > y + bh);
+          })
+          .map((c) => c.key);
+        setSelected(m.additive ? Array.from(new Set([...selectedRef.current, ...hit])) : hit);
+        return;
+      }
       const d = dragRef.current;
       if (!d) return;
       const w = toWorld(e.clientX, e.clientY);
-      const dx = w.x - d.startX;
-      const dy = w.y - d.startY;
-      if (!d.moved && Math.abs(dx) + Math.abs(dy) > 2) {
+      let nx = d.origX + (w.x - d.startX);
+      let ny = d.origY + (w.y - d.startY);
+      const self = viewCardsRef.current.find((c) => c.key === d.key);
+      const sw = self?.w ?? 280;
+      const sh = self?.h ?? 373;
+      // snap to other cards (8px screen → world)
+      const snapR = 8 / Math.max(viewportRef.current.z, 0.1);
+      const g: Array<{ x1: number; y1: number; x2: number; y2: number }> = [];
+      for (const c of viewCardsRef.current) {
+        if (c.key === d.key) continue;
+        const ax = c.x;
+        const axc = c.x + c.w / 2;
+        const axr = c.x + c.w;
+        const ay = c.y;
+        const ayc = c.y + c.h / 2;
+        const ayb = c.y + c.h;
+        const bx = nx;
+        const bxc = nx + sw / 2;
+        const bxr = nx + sw;
+        const by = ny;
+        const byc = ny + sh / 2;
+        const byb = ny + sh;
+        if (Math.abs(bx - ax) < snapR) {
+          nx = ax;
+          g.push({ x1: ax, y1: Math.min(by, ay) - 24, x2: ax, y2: Math.max(byb, ayb) + 24 });
+        } else if (Math.abs(bxc - axc) < snapR) {
+          nx = axc - sw / 2;
+          g.push({ x1: axc, y1: Math.min(by, ay) - 24, x2: axc, y2: Math.max(byb, ayb) + 24 });
+        } else if (Math.abs(bxr - axr) < snapR) {
+          nx = axr - sw;
+          g.push({ x1: axr, y1: Math.min(by, ay) - 24, x2: axr, y2: Math.max(byb, ayb) + 24 });
+        }
+        if (Math.abs(by - ay) < snapR) {
+          ny = ay;
+          g.push({ x1: Math.min(bx, ax) - 24, y1: ay, x2: Math.max(bxr, axr) + 24, y2: ay });
+        } else if (Math.abs(byc - ayc) < snapR) {
+          ny = ayc - sh / 2;
+          g.push({ x1: Math.min(bx, ax) - 24, y1: ayc, x2: Math.max(bxr, axr) + 24, y2: ayc });
+        } else if (Math.abs(byb - ayb) < snapR) {
+          ny = ayb - sh;
+          g.push({ x1: Math.min(bx, ax) - 24, y1: ayb, x2: Math.max(bxr, axr) + 24, y2: ayb });
+        }
+      }
+      setGuides(g.slice(0, 6));
+      if (!d.moved && Math.abs(w.x - d.startX) + Math.abs(w.y - d.startY) > 2) {
         d.moved = true;
         el.setPointerCapture(e.pointerId);
       }
       if (!d.moved) return;
       const keys = selectedRef.current.includes(d.key) ? selectedRef.current : [d.key];
-      applyDrag(keys, d.key, d.origX + dx, d.origY + dy);
+      applyDrag(keys, d.key, nx, ny);
     };
 
     const onPointerUp = () => {
       if (dragRef.current?.moved) scheduleSave();
       dragRef.current = null;
       panRef.current = null;
+      marqueeRef.current = null;
+      setMarquee(null);
+      setGuides([]);
     };
 
     el.addEventListener("wheel", onWheel, { passive: false });
@@ -736,6 +819,18 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
         }}
       >
         <svg className="canvas-links" aria-hidden>
+          {guides.map((g, i) => (
+            <line
+              key={`g${i}`}
+              x1={g.x1}
+              y1={g.y1}
+              x2={g.x2}
+              y2={g.y2}
+              stroke="#2563eb"
+              strokeWidth={1.5 / viewport.z}
+              opacity={0.85}
+            />
+          ))}
           {arrows.map((a) => (
             <line
               key={a.key}
@@ -755,6 +850,17 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
             </marker>
           </defs>
         </svg>
+        {marquee && (
+          <div
+            className="lf-marquee"
+            style={{
+              left: marquee.x,
+              top: marquee.y,
+              width: marquee.w,
+              height: marquee.h,
+            }}
+          />
+        )}
 
         {viewCards.map((c) => (
           <div
