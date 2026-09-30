@@ -371,10 +371,20 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
         }
 
         // Whitelist: drop every unmanaged shape (orphans, native groups, paste, drop).
+        // deleteShapes silently skips isLocked shapes — our arrows are locked — so unlock first.
         const orphans = editor
           .getCurrentPageShapes()
           .filter((shape) => !wantedShapes.has(shape.id));
-        if (orphans.length) editor.deleteShapes(orphans.map((s) => s.id));
+        if (orphans.length) {
+          editor.run(() => {
+            for (const s of orphans) {
+              if (s.isLocked) {
+                editor.updateShape({ id: s.id, type: s.type, isLocked: false });
+              }
+            }
+            editor.deleteShapes(orphans.map((s) => s.id));
+          });
+        }
 
         const eSrc = editor.getShape(imgId("source")) as TLImageShape | undefined;
         const upsert = (

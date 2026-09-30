@@ -209,6 +209,47 @@ async function main() {
     `labels=${JSON.stringify(groupLabels)} floatCard=${stillHasFloatCard}`,
   );
 
+  // arrows must not leak across group/ungroup (locked arrows used to survive deleteShapes)
+  const arrowIds = () =>
+    page.evaluate(() =>
+      [...document.querySelectorAll("[data-shape-id]")]
+        .map((e) => e.getAttribute("data-shape-id") || "")
+        .filter((id) => id.includes("lf-a-")),
+    );
+  const arrowsGrouped = await arrowIds();
+  const ungroupBtn = page.locator('.sel-tools button[title="解组"]');
+  const junction = page.locator(".junction-dot");
+  if (await ungroupBtn.count()) {
+    // select group card first
+    await page.locator('[data-shape-id^="shape:lf-group:"]').first().click();
+    await page.waitForTimeout(300);
+    const ub = page.locator('.sel-tools button[title="解组"]');
+    if (await ub.count()) await ub.click();
+    else if (await junction.count()) await junction.first().click();
+  } else if (await junction.count()) {
+    await junction.first().click();
+  }
+  await page.waitForTimeout(1000);
+  const arrowsUngrouped = await arrowIds();
+  const shapeIds = await page.evaluate(() =>
+    [...document.querySelectorAll("[data-shape-id]")].map((e) => e.getAttribute("data-shape-id")),
+  );
+  // while grouped: only arrows to group cards (no leftover member arrows)
+  const memberArrowsLeaked = arrowsGrouped.filter((id) => !id.includes("group:"));
+  // after ungroup: no leftover group arrows, every arrow has a living target
+  const groupArrowsLeaked = arrowsUngrouped.filter((id) => id.includes("group:"));
+  const dangling = arrowsUngrouped.filter((id) => {
+    const target = id.replace("shape:lf-a-", "shape:lf-");
+    return !shapeIds.includes(target);
+  });
+  check(
+    "6 组/解组无幽灵连线",
+    memberArrowsLeaked.length === 0 &&
+      groupArrowsLeaked.length === 0 &&
+      dangling.length === 0,
+    `grouped=${JSON.stringify(arrowsGrouped)} ungrouped=${JSON.stringify(arrowsUngrouped)} memberLeak=${JSON.stringify(memberArrowsLeaked)} groupLeak=${JSON.stringify(groupArrowsLeaked)} dangling=${JSON.stringify(dangling)}`,
+  );
+
   // ---------- 5. Image aspect ----------
   const doc5 = readDoc();
   const aspectOk = doc5.layers.every((l) => {

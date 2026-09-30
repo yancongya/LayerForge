@@ -434,6 +434,7 @@ app 级 undo/redo 事务化 · 单选/多选浮动工具条与尺寸读数 · �
 **tldraw 5.4.2 取证补充（本轮踩坑）**
 
 - **`components.ContextMenu` 不可设为 `() => null`**：默认 `DefaultContextMenu` 的 Trigger **包着 `<Canvas />`**（`Tldraw.js` → `InsideOfEditorAndUiContext` 优先渲染 ContextMenu）。置空 = 画布整块消失、shape 只在 store 不进 DOM。收口只删 `actions`，让菜单项自动变 null。
+- **`deleteShapes` 跳过 `isLocked` shape**（`Editor.js:_getUnlockedShapeIds`）。连线是 locked 的 → 白名单清不掉、组/解组后留下幽灵箭头。删除前必须先 `updateShape({isLocked:false})`。
 - `ImageToolbar` 是独立浮条（裁剪/ALT），与自绘 `sel-tools` 叠出双工具条 → 置空 Image/Video/RichText 浮条，功能并进 `sel-tools`。
 - 首屏若用 fallback 假 layers 跑 `syncGraph`，会把 `findPlacement` 写回并覆盖用户拖好的 `x/y`。App 必须空项目启动，等 API。
 
@@ -441,12 +442,13 @@ app 级 undo/redo 事务化 · 单选/多选浮动工具条与尺寸读数 · �
 
 - `python F:/LayerForge/.p0-layercore-check.py` → **PASS 9/9**（需先 `git restore projects/demo/layers.json` 保证 v2 源文件；验收会改 demo）。
 - `npx tsc --noEmit -p apps/web/tsconfig.json` → 干净；`npm run build` 通过。
-- `.p0-canvas-check.mjs`（dev server + Playwright）→ **7/7**：
+- `.p0-canvas-check.mjs`（dev server + Playwright）→ **8/8**：
   1. 拖位持久（拖 → 改名 → 切组映射 → 回画布 → 刷新，坐标保持；`layers.json` 有新 x/y）
   2. Ctrl+D / Ctrl+G / Ctrl+A+Delete 无僵尸卡、无影子组、无独立合成卡
   3. 单一工具条（`sel-tools=1`，无 ImageToolbar）；删除落盘
   4. 打组后点「合成」→ 组卡名「… · 合成预览」，无浮动合成卡
   5. 卡片比例 = 图片比例
+  6. 组/解组无幽灵连线（组中只有指向组卡的箭；解组后箭头都有活靶）
   - 另：改名落盘（`layers.json` name 变更）
 - ⚠️ 既有：`tsconfig.node.json` 缺 `@types/node` 不在 build 路径。
 
