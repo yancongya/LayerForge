@@ -80,9 +80,9 @@ async function main() {
   console.log("after drag", midPos["shape:lf-base"], "was", beforePos["shape:lf-base"]);
   console.log("json after drag", readDoc().layers.map((l) => [l.id, l.x, l.y]));
 
-  const nameStick = page.locator(".name-stick", { hasText: "Base" }).first();
+  const nameStick = page.locator('[data-shape-id="shape:lf-n-base"]');
   if (await nameStick.count()) {
-    await nameStick.dblclick();
+    await nameStick.dblclick({ force: true });
     const input = page.locator(".name-edit");
     await input.waitFor({ timeout: 2000 });
     await input.fill("底板-测试");
@@ -153,9 +153,12 @@ async function main() {
     "shape:lf-fg",
     "shape:lf-composite",
   ]);
-  const zombies = idsAfter.filter(
-    (id) => !allowed.has(id) && !id.startsWith("shape:lf-group:"),
-  );
+  const isManaged = (id) =>
+    allowed.has(id) ||
+    id.startsWith("shape:lf-group:") ||
+    id.startsWith("shape:lf-n-") ||
+    id.startsWith("shape:lf-b-");
+  const zombies = idsAfter.filter((id) => !isManaged(id));
   const hasCompositeCard = idsAfter.includes("shape:lf-composite");
   check(
     "2 无僵尸卡无影子组",
@@ -200,7 +203,10 @@ async function main() {
   await page.getByRole("button", { name: "合成", exact: true }).click();
   await page.waitForTimeout(1500);
 
-  const groupLabels = await page.locator(".name-stick").allTextContents();
+  const groupLabels = await page.evaluate(() =>
+    [...document.querySelectorAll("[data-shape-id^='shape:lf-n-']")]
+      .map((el) => el.textContent || ""),
+  );
   const hasGroupPreview = groupLabels.some((t) => t.includes("合成预览"));
   const stillHasFloatCard = await page.locator(shapeSel("composite")).count();
   check(
@@ -269,7 +275,11 @@ async function main() {
   check("5 卡片比例匹配图片", aspectOk);
 
   // order badges + multi-only sort tools
-  const badgeTexts = await page.locator(".order-badge").allTextContents();
+  const badgeTexts = await page.evaluate(() =>
+    [...document.querySelectorAll("[data-shape-id^='shape:lf-b-']")]
+      .map((el) => el.textContent || "")
+      .filter(Boolean),
+  );
   // clear selection then select one
   await page.keyboard.press("Escape");
   await page.locator(shapeSel("fg")).click({ force: true }).catch(() => {});

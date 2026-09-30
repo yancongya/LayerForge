@@ -19,6 +19,7 @@ import {
   toRichText,
   type Editor,
   type TLArrowShape,
+  type TLTextShape,
 } from "tldraw";
 import "tldraw/tldraw.css";
 import { log } from "./log";
@@ -114,6 +115,12 @@ function imgId(id: string): TLShapeId {
 function arrowId(id: string): TLShapeId {
   return createShapeId(`lf-a-${id}`);
 }
+function labelId(id: string): TLShapeId {
+  return createShapeId(`lf-n-${id}`);
+}
+function badgeId(id: string): TLShapeId {
+  return createShapeId(`lf-b-${id}`);
+}
 
 function cardBox(w?: number, h?: number, imgW?: number, imgH?: number) {
   if (w && h && w > 0 && h > 0) return { w, h };
@@ -168,9 +175,75 @@ function ensureAsset(
 }
 
 type Hub = { key: string; x: number; y: number; groupId: string };
-type NameLabel = { key: string; name: string; x: number; y: number; w: number; dim?: boolean };
-type OrderBadge = { key: string; n: number; x: number; y: number; dim?: boolean };
 type Envelope = { x: number; y: number; w: number; h: number } | null;
+
+function RenameInput({
+  shapeId,
+  rootRef,
+  defaultValue,
+  onCommit,
+  onCancel,
+}: {
+  shapeId: TLShapeId;
+  rootRef: React.RefObject<HTMLDivElement | null>;
+  defaultValue: string;
+  onCommit: (value: string) => void;
+  onCancel: () => void;
+}) {
+  const [box, setBox] = useState<{ left: number; top: number; width: number }>({
+    left: 40,
+    top: 40,
+    width: 200,
+  });
+  const armedRef = useRef(false);
+  const mountedAt = useRef(Date.now());
+  useEffect(() => {
+    const place = () => {
+      const el = document.querySelector(`[data-shape-id="${shapeId}"]`);
+      const root = rootRef.current ?? document.querySelector(".canvas-stage");
+      if (!el || !root) return;
+      const wr = root.getBoundingClientRect();
+      const r = el.getBoundingClientRect();
+      setBox({ left: r.left - wr.left, top: r.top - wr.top, width: r.width });
+    };
+    place();
+    const t = window.setInterval(place, 50);
+    return () => window.clearInterval(t);
+  }, [shapeId, rootRef]);
+  return (
+    <input
+      className="name-edit"
+      style={{ left: box.left, top: box.top, width: box.width }}
+      ref={(el) => {
+        if (el) {
+          window.setTimeout(() => {
+            if (document.body.contains(el)) {
+              el.focus();
+              armedRef.current = true;
+            }
+          }, 50);
+        }
+      }}
+      defaultValue={defaultValue}
+      onPointerDown={(e) => e.stopPropagation()}
+      onBlur={(e) => {
+        // Ignore canvas focus-steal in the first moment after mount.
+        if (Date.now() - mountedAt.current < 500) {
+          window.setTimeout(() => {
+            if (document.body.contains(e.currentTarget)) e.currentTarget.focus();
+          }, 0);
+          return;
+        }
+        onCommit(e.currentTarget.value);
+      }}
+      onKeyDown={(e) => {
+        e.stopPropagation();
+        if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+        if (e.key === "Escape") onCancel();
+      }}
+    />
+  );
+}
 
 const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
   {
@@ -206,25 +279,19 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
   const [selLayers, setSelLayers] = useState<string[]>([]);
   const [selGroup, setSelGroup] = useState<string | null>(null);
   const [hubs, setHubs] = useState<Hub[]>([]);
-  const [names, setNames] = useState<NameLabel[]>([]);
-  const [badges, setBadges] = useState<OrderBadge[]>([]);
   const [envelope, setEnvelope] = useState<Envelope>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const setEditingIdRef = useRef(setEditingId);
+  setEditingIdRef.current = setEditingId;
   const [toolPos, setToolPos] = useState<{ x: number; y: number } | null>(null);
   /** When set, canvas shows this group's members (smart-object style). Esc exits. */
   const [enteredGroupId, setEnteredGroupId] = useState<string | null>(null);
+  const setEnteredGroupRef = useRef(setEnteredGroupId);
+  setEnteredGroupRef.current = setEnteredGroupId;
   const enteredGroupRef = useRef<string | null>(null);
   enteredGroupRef.current = enteredGroupId;
   const selGroupRef = useRef<string | null>(null);
   selGroupRef.current = selGroup;
-
-  const commitRename = (n: NameLabel, value: string) => {
-    setEditingId(null);
-    const name = value.trim();
-    if (!name || n.key === "source" || n.key === "composite") return;
-    if (String(n.key).startsWith("group:")) onRenameGroup?.(String(n.key).slice(6), name);
-    else onRename?.(n.key, name);
-  };
 
   layersRef.current = layers;
   groupsRef.current = groups;
@@ -302,30 +369,8 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
   const refreshHubs = useCallback(() => {
     const editor = editorRef.current;
     if (!editor) return;
-    const collected: NameLabel[] = [];
-    const orderBadges: OrderBadge[] = [];
-    const pin = (key: string, name: string, orderN?: number, dim = false) => {
-      const el = rootRef.current?.querySelector(`[data-shape-id="${imgId(key)}"]`);
-      if (!el || !rootRef.current) return;
-      const wr = rootRef.current.getBoundingClientRect();
-      const r = el.getBoundingClientRect();
-      collected.push({
-        key,
-        name,
-        x: r.left - wr.left,
-        y: r.bottom - wr.top + 2,
-        w: r.width,
-        dim,
-      });
-      if (orderN != null) {
-        orderBadges.push({
-          key,
-          n: orderN,
-          x: r.left - wr.left + 8,
-          y: r.top - wr.top + 8,
-          dim,
-        });
-      }
+    const pin = (_key: string, _name: string, _orderN?: number, _dim = false) => {
+      /* labels/badges are real shapes now */
     };
     const entered = enteredGroupRef.current;
     if (sourceRef.current) pin("source", "原图", undefined, Boolean(entered));
@@ -371,8 +416,6 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
       chips.push({ key: g.id, x: p.x, y: p.y, groupId: g.id });
     }
     setHubs(chips);
-    setNames(collected);
-    setBadges(orderBadges);
     // Group envelope: dashed hull around members when a group is selected or open.
     const gid = enteredGroupRef.current ?? selGroupRef.current;
     if (gid && rootRef.current) {
@@ -502,6 +545,8 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
         for (const c of cards) {
           const key = c.layer ? c.layer.id : `group:${c.group!.id}`;
           track(key);
+          wantedShapes.add(labelId(key));
+          wantedShapes.add(badgeId(key));
           targets.push(key);
         }
         if (src) {
@@ -575,6 +620,53 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
           }
         };
 
+        /** Name / order chips as locked text shapes (no DOM overlay). */
+        const upsertLabel = (
+          key: string,
+          text: string,
+          x: number,
+          y: number,
+          w: number,
+          opacity: number,
+          role: "label" | "badge",
+        ) => {
+          const id = role === "label" ? labelId(key) : badgeId(key);
+          const prev = editor.getShape(id) as TLTextShape | undefined;
+          const props = {
+            color: "black" as const,
+            size: "s" as const,
+            font: "sans" as const,
+            textAlign: "middle" as const,
+            w,
+            richText: toRichText(text),
+            scale: 1,
+            autoSize: false,
+          };
+          if (!prev) {
+            editor.createShape<TLTextShape>({
+              id,
+              type: "text",
+              x,
+              y,
+              isLocked: true,
+              opacity,
+              props,
+              meta: { role, layerId: key, name: text },
+            });
+          } else {
+            editor.updateShape<TLTextShape>({
+              id,
+              type: "text",
+              x,
+              y,
+              isLocked: true,
+              opacity,
+              props,
+              meta: { role, layerId: key, name: text },
+            });
+          }
+        };
+
         // Source card: draggable; position kept in localStorage (not layers.json).
         // Inside isolation it is dimmed + locked like any other non-member.
         if (src) {
@@ -590,6 +682,18 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
             Boolean(entered),
             entered ? 0.22 : 1,
           );
+          const sShape = editor.getShape(imgId("source")) as TLImageShape | undefined;
+          if (sShape) {
+            upsertLabel(
+              "source",
+              "原图",
+              sShape.x,
+              sShape.y + sShape.props.h + 6,
+              sShape.props.w,
+              entered ? 0.22 : 1,
+              "label",
+            );
+          }
         }
 
         // Rightmost edge of cards we know about, for findPlacement of unplaced items.
@@ -620,6 +724,7 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
             const dim = c.dim;
             const baseOp =
               (layer.visible === false ? 0.35 : 1) * Math.max(0, Math.min(1, layer.opacity ?? 1));
+            const vis = dim ? 0.22 : baseOp;
             upsert(
               layer.id,
               "layer",
@@ -629,8 +734,27 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
               { w: layer.imgW || 720, h: layer.imgH || 960 },
               { x, y },
               dim || Boolean(layer.locked),
-              dim ? 0.22 : baseOp,
+              vis,
             );
+            const lShape = editor.getShape(imgId(layer.id)) as TLImageShape | undefined;
+            const orderN =
+              cards
+                .filter((cc) => cc.layer && !cc.dim)
+                .findIndex((cc) => cc.layer && cc.layer.id === layer.id) + 1;
+            if (lShape) {
+              upsertLabel(
+                layer.id,
+                layer.name,
+                lShape.x,
+                lShape.y + lShape.props.h + 6,
+                lShape.props.w,
+                vis,
+                "label",
+              );
+              if (!dim && orderN > 0) {
+                upsertLabel(layer.id, String(orderN), lShape.x + 8, lShape.y + 8, 36, 0.9, "badge");
+              }
+            }
             return;
           }
           const g = c.group!;
@@ -652,17 +776,31 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
             });
           }
           noteBox(x, box.w);
+          const gOp = c.dim ? 0.18 : 1;
+          const gName = previewSrc !== cover.url ? `${g.name} · 合成预览` : g.name;
           upsert(
             `group:${g.id}`,
             "layer",
             previewSrc,
-            previewSrc !== cover.url ? `${g.name} · 合成预览` : g.name,
+            gName,
             box,
             { w: g.imgW || cover.imgW || 720, h: g.imgH || cover.imgH || 960 },
             { x, y },
             c.dim,
-            c.dim ? 0.18 : 1,
+            gOp,
           );
+          const gShape = editor.getShape(imgId(`group:${g.id}`)) as TLImageShape | undefined;
+          if (gShape) {
+            upsertLabel(
+              `group:${g.id}`,
+              gName,
+              gShape.x,
+              gShape.y + gShape.props.h + 6,
+              gShape.props.w,
+              gOp,
+              "label",
+            );
+          }
         });
 
         // Isolation styling pass: force dim + lock on every non-member shape.
@@ -1046,26 +1184,41 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
 
           const root = editor.getContainer();
           const onDbl = (e: MouseEvent) => {
-            // Prefer the shape under the cursor — selection can lag one click behind.
-            const el = (e.target as HTMLElement | null)?.closest?.(
-              "[data-shape-id]",
-            ) as HTMLElement | null;
-            const sid = el?.getAttribute("data-shape-id");
-            const shape = sid
-              ? editor.getShape(sid as TLShapeId)
-              : editor.getSelectedShapes()[0];
-            const key = shape ? metaOf(shape).layerId : undefined;
+            const pagePt = editor.screenToPage({ x: e.clientX, y: e.clientY });
+            const under = editor.getShapesAtPoint(pagePt);
+            let key: string | undefined;
+            let role: string | undefined;
+            for (const s of under) {
+              const m = metaOf(s);
+              if (m.role === "label" || m.role === "badge" || m.role === "layer" || m.role === "source") {
+                key = m.layerId;
+                role = m.role;
+                if (role === "label" || role === "badge") break;
+              }
+            }
+            log.debug("tldraw", "dblclick", {
+              n: under.length,
+              key,
+              role,
+              ids: under.map((s) => s.id).slice(0, 4),
+            });
+            if (role === "label" || role === "badge") {
+              e.preventDefault();
+              e.stopPropagation();
+              if (key && key !== "source") {
+                setEditingIdRef.current(key);
+              }
+              return;
+            }
             if (key && String(key).startsWith("group:")) {
               e.preventDefault();
               e.stopPropagation();
-              const gid = String(key).slice(6);
-              setEnteredGroupId(gid);
-              log.debug("tldraw", "enter group", { gid });
+              setEnteredGroupRef.current(String(key).slice(6));
               return;
             }
             e.stopPropagation();
           };
-          root.addEventListener("dblclick", onDbl, true);
+          window.addEventListener("dblclick", onDbl, true);
 
           const cancelIfBusy = () => {
             const inputs = editor.inputs as unknown as {
@@ -1112,7 +1265,7 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
             window.removeEventListener("keydown", onArrow);
             editor.getContainer().removeEventListener("pointerup", onPointerUp);
             editor.off("change", onEditorChange);
-            root.removeEventListener("dblclick", onDbl, true);
+            window.removeEventListener("dblclick", onDbl, true);
             root.removeEventListener("contextmenu", onCtx, true);
             root.removeEventListener("pointerdown", onDown, true);
             window.removeEventListener("keydown", onKey);
@@ -1123,38 +1276,28 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
         }}
       />
 
-      <div className="name-layer">
-        {names.map((n) =>
-          editingId === n.key ? (
-            <input
-              key={n.key}
-              className="name-edit"
-              style={{ left: n.x, top: n.y, width: n.w }}
-              autoFocus
-              defaultValue={n.name}
-              onBlur={(e) => commitRename(n, e.currentTarget.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-                if (e.key === "Escape") setEditingId(null);
-              }}
-            />
-          ) : (
-            <div
-              key={n.key}
-              className={n.dim ? "name-stick dim" : "name-stick"}
-              style={{ left: n.x, top: n.y, width: n.w }}
-              onDoubleClick={(e) => {
-                e.stopPropagation();
-                if (n.key === "source" || n.key === "composite") return;
-                // Double-click the name → rename. Enter group is double-click on the card.
-                setEditingId(n.key);
-              }}
-            >
-              {n.name}
-            </div>
-          ),
-        )}
-      </div>
+      {editingId && (
+        <RenameInput
+          shapeId={labelId(editingId)}
+          rootRef={rootRef}
+          defaultValue={
+            layers.find((l) => l.id === editingId)?.name ??
+            groups.find((g) => `group:${g.id}` === editingId)?.name ??
+            ""
+          }
+          onCommit={(value) => {
+            const name = value.trim();
+            setEditingId(null);
+            if (!name || editingId === "source") return;
+            if (String(editingId).startsWith("group:")) {
+              onRenameGroup?.(String(editingId).slice(6), name);
+            } else {
+              onRename?.(editingId, name);
+            }
+          }}
+          onCancel={() => setEditingId(null)}
+        />
+      )}
       {envelope && (
         <div
           className="group-envelope"
@@ -1162,17 +1305,6 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
           style={{ left: envelope.x, top: envelope.y, width: envelope.w, height: envelope.h }}
         />
       )}
-      <div className="order-layer" aria-hidden>
-        {badges.map((b) => (
-          <div
-            key={b.key}
-            className={b.dim ? "order-badge dim" : "order-badge"}
-            style={{ left: b.x, top: b.y }}
-          >
-            {b.n}
-          </div>
-        ))}
-      </div>
       <div className="junction-layer">
         {hubs.map((t) => (
           <button

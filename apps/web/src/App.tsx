@@ -11,6 +11,7 @@ import {
   renameGroup,
   renameLayer,
   reorderLayers,
+  replaceDocument,
   saveLayout,
   setLayerFlags,
   ungroupLayers,
@@ -50,6 +51,89 @@ export default function App() {
   const [showHelp, setShowHelp] = useState(false);
   const [showMinimap, setShowMinimap] = useState(true);
   const dragLayerId = useRef<string | null>(null);
+  const undoStack = useRef<ProjectPayload[]>([]);
+  const redoStack = useRef<ProjectPayload[]>([]);
+  const projectRef = useRef(project);
+  projectRef.current = project;
+  const liveComposeTimer = useRef<number | null>(null);
+
+  /** E4: debounced recompose after layer mutations so group preview stays live. */
+  const draftKey = `lf:draft:${projectId}`;
+  const [draftDataUrl, setDraftDataUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(`lf:draft:${projectId}`);
+      if (raw) setDraftDataUrl(raw);
+    } catch {
+      /* ignore */
+    }
+  }, [projectId]);
+
+  const clearDraft = () => {
+    try {
+      localStorage.removeItem(draftKey);
+    } catch {
+      /* ignore */
+    }
+    setDraftDataUrl(null);
+  };
+
+  const scheduleLiveCompose = useCallback(() => {
+    if (!apiOk) return;
+    if (liveComposeTimer.current != null) window.clearTimeout(liveComposeTimer.current);
+    liveComposeTimer.current = window.setTimeout(async () => {
+      liveComposeTimer.current = null;
+      try {
+        const data = await composeProject(projectRef.current.id);
+        applyProject(data);
+      } catch (err) {
+        log.warn("app", "live compose failed", String(err));
+      }
+    }, 400);
+  }, [apiOk]);
+
+  /** Snapshot current layers.json state before a mutation (undo unit). */
+  const pushUndo = useCallback(() => {
+    undoStack.current.push(projectRef.current);
+    if (undoStack.current.length > 50) undoStack.current.shift();
+    redoStack.current = [];
+  }, []);
+
+  const restoreSnapshot = async (snap: ProjectPayload) => {
+    const data = await replaceDocument(snap.id, snap.layers ?? [], snap.groups ?? []);
+    applyProject(data);
+  };
+
+  const onUndo = async () => {
+    const prev = undoStack.current.pop();
+    if (!prev) {
+      setStatus({ kind: "info", text: "没有可撤销的操作" });
+      return;
+    }
+    redoStack.current.push(projectRef.current);
+    try {
+      await restoreSnapshot(prev);
+      setStatus({ kind: "ok", text: "已撤销" });
+    } catch (err) {
+      setStatus({ kind: "err", text: err instanceof Error ? err.message : String(err) });
+    }
+  };
+
+  const onRedo = async () => {
+    const next = redoStack.current.pop();
+    if (!next) {
+      setStatus({ kind: "info", text: "没有可重做的操作" });
+      return;
+    }
+    undoStack.current.push(projectRef.current);
+    try {
+      await restoreSnapshot(next);
+      setStatus({ kind: "ok", text: "已重做" });
+    } catch (err) {
+      setStatus({ kind: "err", text: err instanceof Error ? err.message : String(err) });
+    }
+  };
   const fileRef = useRef<HTMLInputElement>(null);
   const canvasApi = useRef<CanvasApi>(null);
 
@@ -107,6 +191,12 @@ export default function App() {
     const dataUrl = await fileToDataUrl(file);
     setPendingDataUrl(dataUrl);
     setProject((p) => ({ ...p, sourceUrl: dataUrl }));
+    try {
+      localStorage.setItem(`lf:draft:${projectId}`, dataUrl);
+      setDraftDataUrl(dataUrl);
+    } catch {
+      /* quota */
+    }
     setStatus({ kind: "ok", text: `已导入 ${file.name}` });
   }, []);
 
@@ -153,6 +243,14 @@ export default function App() {
         e.preventDefault();
         canvasApi.current?.zoomTo100();
       }
+      if (e.key === "z" || e.key === "Z") {
+        e.preventDefault();
+        void (e.shiftKey ? onRedo() : onUndo());
+      }
+      if (e.key === "y" || e.key === "Y") {
+        e.preventDefault();
+        void onRedo();
+      }
     };
     // passive:false is required for preventDefault on wheel; capture wins over UI handlers.
     window.addEventListener("wheel", onWheel, { passive: false, capture: true });
@@ -183,6 +281,7 @@ export default function App() {
   };
 
   const onMove = async (id: string, dir: "up" | "down") => {
+    pushUndo();
     const ids = layers.map((l) => l.id);
     const i = ids.indexOf(id);
     const j = dir === "up" ? i - 1 : i + 1;
@@ -194,6 +293,7 @@ export default function App() {
       const data = await reorderLayers(project.id, next);
       applyProject(data);
       setStatus({ kind: "ok", text: `顺序 ${next.join("→")}` });
+      scheduleLiveCompose();
     } catch (err) {
       setStatus({ kind: "err", text: err instanceof Error ? err.message : String(err) });
     } finally {
@@ -203,6 +303,7 @@ export default function App() {
 
   /** Reverse the selected layers' relative order; others stay put. */
   const onReverseOrder = async (selected: string[]) => {
+    pushUndo();
     const ids = layers.map((l) => l.id);
     const selectedSet = new Set(selected);
     const picked = ids.filter((id) => selectedSet.has(id));
@@ -223,6 +324,7 @@ export default function App() {
   };
 
   const onGroup = async (memberIds: string[]) => {
+    pushUndo();
     log.info("app", "onGroup click", { memberIds });
     setBusy(true);
     try {
@@ -238,6 +340,7 @@ export default function App() {
   };
 
   const onUngroup = async (groupId: string) => {
+    pushUndo();
     setBusy(true);
     try {
       const data = await ungroupLayers(project.id, groupId);
@@ -251,6 +354,7 @@ export default function App() {
   };
 
   const onRename = async (id: string, name: string) => {
+    pushUndo();
     try {
       const data = await renameLayer(project.id, id, name);
       applyProject(data);
@@ -261,6 +365,7 @@ export default function App() {
   };
 
   const onRenameGroup = async (gid: string, name: string) => {
+    pushUndo();
     try {
       const data = await renameGroup(project.id, gid, name);
       applyProject(data);
@@ -271,6 +376,7 @@ export default function App() {
   };
 
   const onDelete = async (id: string) => {
+    pushUndo();
     setBusy(true);
     try {
       const data = await deleteLayer(project.id, id);
@@ -287,9 +393,11 @@ export default function App() {
     id: string,
     flags: { visible?: boolean; locked?: boolean; opacity?: number },
   ) => {
+    pushUndo();
     try {
       const data = await setLayerFlags(project.id, id, flags);
       applyProject(data);
+      scheduleLiveCompose();
       setStatus({
         kind: "ok",
         text: flags.visible === false ? "已隐藏（不进合成）" : flags.visible === true ? "已显示" : flags.locked ? "已锁定" : "已解锁",
@@ -452,6 +560,12 @@ export default function App() {
           <button type="button" title="放大" onClick={() => canvasApi.current?.zoomIn()}>
             +
           </button>
+          <button type="button" title="撤销 (Ctrl+Z)" onClick={() => void onUndo()}>
+            ↶
+          </button>
+          <button type="button" title="重做 (Ctrl+Shift+Z)" onClick={() => void onRedo()}>
+            ↷
+          </button>
           <button
             type="button"
             title="快捷键"
@@ -492,6 +606,26 @@ export default function App() {
           <div className="canvas-hint">
             <strong>导入原图开始</strong>
             <div>拖入 / 粘贴图片，或点「导入」</div>
+          </div>
+        )}
+
+        {draftDataUrl && !pendingDataUrl && (
+          <div className="draft-banner">
+            <span>发现未拆层的草稿原图</span>
+            <button
+              type="button"
+              onClick={() => {
+                setPendingDataUrl(draftDataUrl);
+                setProject((p) => ({ ...p, sourceUrl: draftDataUrl }));
+                setStatus({ kind: "ok", text: "已恢复草稿，可点「拆层」" });
+                clearDraft();
+              }}
+            >
+              恢复
+            </button>
+            <button type="button" onClick={clearDraft}>
+              丢弃
+            </button>
           </div>
         )}
 
