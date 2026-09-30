@@ -2,7 +2,7 @@
 
 > 范围：`apps/web`（tldraw 5.4.2 无限画布宿主）+ `packages/layer-core`（真源 `layers.json`）+ `/api`（`vite-plugin-layerforge-api.ts`）。
 > 方法：代码取证 + `logs/layerforge.log` 运行时证据 + `reference/*` 参考项目盘点 + Lovart / 开源同类对标。四轮：① 首轮全量（§1–§2）② 画布专项补充（§1.1 F6、§3.4）③ 分层工具对标（§4.1、§8）④ **范围裁剪**（「产品边界」节、§5 裁剪版批次、§9 一页纸）。
-> 状态：**仅调研与范围收敛，未改任何业务代码。** 日期：2026-09-30。
+> 状态：**P0（B0+B1+F4）已实施并验收**；产品交互在 P0 期间有定向调整（见 §10.1）。下一阶段 **P1-A 子集/组级合成**。日期：2026-09-30 → 实施 2026-10。
 
 ---
 
@@ -260,26 +260,34 @@ app 级 undo/redo 事务化 · 单选/多选浮动工具条与尺寸读数 · �
 ## 5. 建议实施批次（裁剪版：P0 是承诺，其余是 backlog）
 
 > **范围纪律**：P0 之外一律不进本阶段排期。若 P0 做完仍觉得主路径不顺手，问题一定还在 P0 清单里，而不是"需要再加一个对标功能"。每批可独立中断、独立验收。
+>
+> **P0-B0 / P0-B1 / F4 已完成**（详见 §10）。当前进入 **P1-A**。
 
-### P0-B0 收口（单独一批，最先做）
+### P1-A 子集 / 组级合成（当前批次）
+
+| 内容 | 触及 | 验收 |
+| --- | --- | --- |
+| `compose` 支持按 layer id 子集 / 按 `groupId` 合成；组卡预览改用**该组成员**的合成结果（不再是全项目 `composite.png`）；全项目 `composite.png` 仍服务导出 | `compose.py` `cli.py` `vite-plugin` `CanvasStage` | 两个组各自点合成后封面不同；隐藏成员后组预览少该层；全项目导出仍含全部可见层 |
+
+### P0-B0 收口（已完成）
 
 | 内容 | 触及 | 验收 |
 | --- | --- | --- |
 | override `components.ContextMenu` 为白名单 + `uiOverrides.actions` 剔除原生动作 + 裁快捷键；同时处置两条死链：`selectLayer`（接上：组映射点击定位）、`onToggleCollapse`（**接线或整链删除，不允许继续 `void` 留着**） | `CanvasStage.tsx:44-52,113,460-468`、`App.tsx` 组映射行 | 画布上不存在第二套组模型；`Ctrl+D` / `Ctrl+A→Delete` 不产生僵尸卡、也不复活；点组映射一行，画布选中并定位 |
 
-### P0-B1 真源瘦身版（最小 v3）
+### P0-B1 真源瘦身版（最小 v3，已完成）
 
 | 内容 | 触及 | 验收 |
 | --- | --- | --- |
 | `layers.json` 最小 v3（§4.1a：`x/y/w/h/visible/locked/rev`，`opacity` 可选）；`syncGraph` 去 `forcePos`；新层落位用 `findPlacement`（钉 `y:0` + 最右边缘 + 80px 间隙）；改名 / 删除 / `PUT /layout` 三条路由；layer url cache-buster；相机持久化（`persistenceKey`）；卡片按真实图片比例（解 `ensureAsset` 硬编码 720×960）；schema 注释与 UI 双处写明「位置不影响输出」 | `layers.py` `vite-plugin` `CanvasStage` `App` | 拖位 → 改名 → 删一层 → 切「组映射」→ 刷新 → 重开：摆位、名字、层集合、图内容全部保持，无旧缓存图 |
 
-### P0 同步项（小，且直接服务主路径）
+### P0 同步项（已完成；F4 终态按产品改为「组卡预览」）
 
-- **F4 合成结果可见**：把 `composite.png` 作为画布上一张会刷新的预览卡（最小实现即可，不必先做 frame 组件）。
-- **`visible` 生效于 compose**：关掉一层，导出结果确实少一层 —— 这是"层"这个抽象在本阶段的最低兑现。
+- **F4 合成结果可见**：无独立预览卡；点「合成」后**组卡**封面换 `composite` 并带「· 合成预览」。P1-A 改为每组独立合成。
+- **`visible` 生效于 compose**：已实现（layer-core 9/9 含此项）。
 - **删掉本阶段不需要的对标项**：见「产品边界」不做清单与 §3.2「本阶段不做」。
 
-### P1 及以后（backlog，不与 P0 混排；顺序按主路径痛感再定）
+### P1 及以后（backlog，不与 P0/P1-A 混排）
 
 真分组包络框（显式成员，hull 不参与合成）· 自动整理多列装箱（`layout.ts` 补装箱与 shrink-to-fit 并真正 `import`）· `opacity`/`blend` 前后端同公式（先只放 `normal/multiply/screen`）· 合并图层（subset compose）· 图层面板（拖拽改 z、隔离预览、右键"此处的层"）· app 级 undo/redo 事务化（`editor.run`）· overlay 收敛到自定义 shape · 内建吸附与方向键 nudge · 视口约定（空格平移 + `minZoom/maxZoom` + `⌘0`）· Minimap · 缩放读数与 fit/100% · 快捷键表 · 实时合成预览（E4）· 草稿恢复横幅 · 资源未就绪不卡死 · PSD/PPTX 保真导出（E7）· Agent 可写面 `packages/canvas`（E8）
 
@@ -412,11 +420,11 @@ app 级 undo/redo 事务化 · 单选/多选浮动工具条与尺寸读数 · �
 
 ---
 
-## 10. P0 实施进度与续做清单（中断点快照）
+## 10. 实施进度（P0 完成 → P1-A 进行中）
 
-> **P0-B0 + P0-B1 前端 + F4（按产品反馈调整）已完成。** 后端 v3 切片见下表。剩余为 backlog / 验收收尾。
+### 10.1 已完成（P0 + 产品定向调整）
 
-### 10.1 已完成
+**P0 后端 / 真源（c4fbfe8）**
 
 | 文件 | 内容 |
 | --- | --- |
@@ -425,39 +433,38 @@ app 级 undo/redo 事务化 · 单选/多选浮动工具条与尺寸读数 · �
 | `packages/layer-core/layer_core/decompose.py` | 真实 `imgW/imgH` + 顶行排布；重拆不回退 `rev` |
 | `packages/layer-core/layer_core/cli.py` | `rename` / `rename-group` / `delete` / `flag` / `layout` |
 | `apps/web/vite-plugin-layerforge-api.ts` | `POST rename / rename-group / delete / flag / layout`；payload 带 `rev`；layer url `?v=<rev>`（F5） |
-| `apps/web/src/api.ts` | `renameLayer/renameGroup/deleteLayer/setLayerFlags/saveLayout` |
-| `apps/web/src/App.tsx` | 改名/删除/可见性/锁定/落位全部走 API（F2）；组映射行 `onClick → selectLayer`；初始 `EMPTY_PROJECT`（避免 fallback 在 API 返回前写回假几何）；合成状态提示 |
-| `apps/web/src/CanvasStage.tsx` | **P0-B0**：`uiOverrides.actions` 裁掉原生可变动作（快捷键随 action 消失）；**白名单形状对账**（只留 source/层卡/组卡/连线，清未引用 asset）；`registerExternalContentHandler` 拒收 drop/paste；`onToggleCollapse` 整链删除；`ImageToolbar/VideoToolbar/RichTextToolbar` 置空——**唯一工具条 = 选中浮条 `sel-tools`**（层序/可见/锁定/删除/对齐/打组/解组）<br>**P0-B1**：去 `forcePos`，按 `x/y/w/h` 落位（未落位 `findPlacement` 并写回一次）；asset 按 `imgW/imgH`；拖拽 `pointerup` + 250ms 防抖 `POST /layout`（带 lastSaved 去重，防 applyProject 环）；改名走内联 `name-stick` 双击（**无 `window.prompt`**）；相机 `localStorage` 按 `projectId` 分键（**不用 `persistenceKey`**）<br>**F4（产品调整）**：**不做独立「合成预览」卡**。点「合成」后预览落在**组卡**（封面换 `compositeUrl`，名字后缀「· 合成预览」）；无组时只写 `composite.png` 供导出。原图卡 `isLocked` |
-| `.p0-canvas-check.mjs` | Playwright 前端验收（见 10.2） |
-| `.p0-layercore-check.py` | 后端回归 |
 
-**tldraw 5.4.2 取证补充（本轮踩坑）**
+**P0 前端（b66d24d 起）+ 产品反馈迭代（至 ad61b1c）**
 
-- **`components.ContextMenu` 不可设为 `() => null`**：默认 `DefaultContextMenu` 的 Trigger **包着 `<Canvas />`**（`Tldraw.js` → `InsideOfEditorAndUiContext` 优先渲染 ContextMenu）。置空 = 画布整块消失、shape 只在 store 不进 DOM。收口只删 `actions`，让菜单项自动变 null。
-- **`deleteShapes` 跳过 `isLocked` shape**（`Editor.js:_getUnlockedShapeIds`）。连线是 locked 的 → 白名单清不掉、组/解组后留下幽灵箭头。删除前必须先 `updateShape({isLocked:false})`。
-- `ImageToolbar` 是独立浮条（裁剪/ALT），与自绘 `sel-tools` 叠出双工具条 → 置空 Image/Video/RichText 浮条，功能并进 `sel-tools`。
-- 首屏若用 fallback 假 layers 跑 `syncGraph`，会把 `findPlacement` 写回并覆盖用户拖好的 `x/y`。App 必须空项目启动，等 API。
+| 主题 | 内容 |
+| --- | --- |
+| **B0 收口** | `uiOverrides.actions` 裁掉原生可变动作（快捷键随之消失）；**白名单形状对账**（托管集 = source/层卡/组卡/连线）；删除前先解锁（`deleteShapes` 跳过 `isLocked`）；`registerExternalContentHandler` 拒收 drop/paste；`onToggleCollapse` 整链删除 |
+| **B1 真源** | 去 `forcePos`；按 `x/y/w/h` 落位（未落位 `findPlacement` 写回一次）；asset 按 `imgW/imgH`；拖拽 `pointerup` + 250ms 防抖 `POST /layout`（lastSaved 去重）；改名/删除/flag/layout 全走 API；内联改名；相机 `localStorage` 按 `projectId`（**不用 `persistenceKey`**） |
+| **F4（产品终态）** | **无独立合成预览卡**；点「合成」→ **组卡**封面用 `compositeUrl` +「· 合成预览」。全项目 `composite.png` 供导出 |
+| **UI 手势（产品）** | 双击**名字**改名；双击**卡片**进组（成员亮、无关卡 opacity 0.18+锁定）；Esc/面包屑退出；解组仅解组点；工具条横向、分组（排序\|对齐\|操作）；序号角标；多选「倒序/按序排布」（卡片纵向按序） |
+| **其它** | 原图卡可拖（位置 `lf:srcpos:<projectId>`）；Ctrl+滚轮不触发页面缩放；`EMPTY_PROJECT` 防 fallback 写回；`ImageToolbar` 置空避免双工具条 |
+| **禁做回** | `ContextMenu: () => null`（会藏掉 Canvas）；`window.prompt`；`persistenceKey`；独立合成卡 |
+
+**tldraw 5.4.2 取证（实施踩坑）**
+
+- `DefaultContextMenu` 的 Trigger **包着 `<Canvas />`** — 不可置空 ContextMenu。
+- `deleteShapes` 跳过 locked shape — 清幽灵箭头必须先解锁。
+- fallback layers 先跑 `syncGraph` 会覆盖已保存 `x/y` — App 必须空项目启动。
 
 ### 10.2 已验证
 
-- `python F:/LayerForge/.p0-layercore-check.py` → **PASS 9/9**（需先 `git restore projects/demo/layers.json` 保证 v2 源文件；验收会改 demo）。
-- `npx tsc --noEmit -p apps/web/tsconfig.json` → 干净；`npm run build` 通过。
-- `.p0-canvas-check.mjs`（dev server + Playwright）→ **9/9**：
-  1. 拖位持久（拖 → 改名 → 切组映射 → 回画布 → 刷新，坐标保持；`layers.json` 有新 x/y）
-  2. Ctrl+D / Ctrl+G / Ctrl+A+Delete 无僵尸卡、无影子组、无独立合成卡
-  3. 单一工具条（`sel-tools=1`，无 ImageToolbar）；删除落盘
-  4. 打组后点「合成」→ 组卡名「… · 合成预览」，无浮动合成卡
-  5. 卡片比例 = 图片比例
-  6. 组/解组无幽灵连线（组中只有指向组卡的箭；解组后箭头都有活靶）
-  - 另：改名落盘（`layers.json` name 变更）
-- ⚠️ 既有：`tsconfig.node.json` 缺 `@types/node` 不在 build 路径。
+- `.p0-layercore-check.py` → **9/9**（跑前 `git restore projects/demo/layers.json`）
+- `tsc --noEmit` 干净；`npm run build` 通过
+- `.p0-canvas-check.mjs` → **9/9**：拖位持久 · 无僵尸/影子组 · 单工具条+删除落盘 · 组卡合成预览 · 卡片比例 · 组/解组无幽灵连线 · 序号角标+排序仅多选
+- 手测：源图拖动持久、双击进组/灰白隔离、双击改名、junction 解组、Ctrl+滚轮不缩放页面
+- ⚠️ 既有：`tsconfig.node.json` 缺 `@types/node`（不在 build 路径）
 
-### 10.3 未完成 / 有意延后
+### 10.3 未完成
 
-1. **产品已否决项（勿做回）**：独立「合成预览」节点（F4 原稿）→ 已改为组卡预览；`window.prompt` 改名；`persistenceKey` 相机；双工具条。
-2. **mock 拆层保真度**：合成结果 ≠ 原图是 `mock_decompose` 的程序化分层（色条/灰洗/高光）所致，不是 compose bug。真模型接入前不要当回归失败去“修”合成。
-3. **per-group compose**：目前组卡预览用的是**全项目** `composite.png`；多组时各组卡都会显示同一张全项目合成。要每组独立预览需 compose 支持按成员 id 过滤（新 CLI/路由）→ 先进 §5 backlog。
-4. **其余 P1**：见 §5「P1 及以后」（历史轨、composer、多页面、blend/mask…）。
+1. **P1-A（当前）**：子集/组级 compose，组卡独立预览 — 见 §5
+2. **F5 端到端**：「连续拆两张不同原图」自动用例未写（`?v=rev` 已实现）
+3. **mock 拆层保真度**：合成≠原图是 mock 设计，真模型前勿当 bug 修
+4. **其余 P1**：§5 backlog（图层面板、undo、吸附、视口、minimap…）
 
 ### 10.4 后端路由速查
 
@@ -467,5 +474,6 @@ POST /api/projects/:id/rename-group  {group_id, name}
 POST /api/projects/:id/delete        {id}
 POST /api/projects/:id/flag          {id, visible?, locked?}
 POST /api/projects/:id/layout        {layers:[{id,x,y,w,h}], groups:[{id,x,y,w,h}]}
+POST /api/projects/:id/compose       {} 或 {layer_ids:[...]} 或 {group_id}   ← P1-A
 → 全部返回整份 projectPayload（含新 rev 与带 ?v= 的 layer url）
 ```
