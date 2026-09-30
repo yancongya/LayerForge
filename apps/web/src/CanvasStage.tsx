@@ -658,10 +658,10 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
     const groupCard = gid ? (editor.getShape(imgId(`group:${gid}`)) as TLImageShape | undefined) : null;
     const all = groupCard ? [...shapes, groupCard] : shapes;
     if (all.length) {
-      const minX = Math.min(...all.map((s) => s.x));
       const maxX = Math.max(...all.map((s) => s.x + s.props.w));
       const minY = Math.min(...all.map((s) => s.y));
-      const p = editor.pageToScreen({ x: (minX + maxX) / 2, y: minY - 12 });
+      // Vertical toolbar sits on the right of the selection (not a long horizontal bar).
+      const p = editor.pageToScreen({ x: maxX + 10, y: minY });
       setToolPos({ x: p.x, y: p.y });
     } else {
       setToolPos(null);
@@ -687,24 +687,24 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
     scheduleLayoutSave();
   };
 
-  /** Snap free-layer cards into one top row ordered by `order` (same rhythm as decompose). */
+  /** Snap free-layer cards into one column ordered by `order` (top → bottom). */
   const layoutByOrder = () => {
     const editor = editorRef.current;
     if (!editor) return;
     const free = layersRef.current
       .filter((l) => !l.groupId)
       .sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
-    let x = 0;
+    let y = 0;
     const items: LayoutItem[] = [];
     for (const layer of free) {
       const s = editor.getShape(imgId(layer.id)) as TLImageShape | undefined;
       const w = s?.props.w ?? layer.w ?? 280;
       const h = s?.props.h ?? layer.h ?? 373;
       if (s) {
-        editor.updateShape<TLImageShape>({ id: s.id, type: "image", x, y: 0 });
+        editor.updateShape<TLImageShape>({ id: s.id, type: "image", x: 0, y });
       }
-      items.push({ id: layer.id, x, y: 0, w, h });
-      x += w + CARD_GAP;
+      items.push({ id: layer.id, x: 0, y, w, h });
+      y += h + CARD_GAP;
     }
     if (items.length) {
       lastSavedRef.current = JSON.stringify({ l: items, g: [] });
@@ -941,22 +941,9 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
       </div>
 
       {(selLayers.length > 0 || selGroup) && toolPos && (
-        <div
-          className="sel-tools"
-          style={{ left: toolPos.x, top: toolPos.y, transform: "translate(-50%, -100%)" }}
-        >
-          {selLayers.length >= 2 && (
-            <>
-              <button type="button" title="倒序" onClick={() => onReverseOrder?.(selLayers)}>
-                ⇅
-              </button>
-              <button type="button" title="按序排布" onClick={layoutByOrder}>
-                ⇄
-              </button>
-            </>
-          )}
+        <div className="sel-tools" style={{ left: toolPos.x, top: toolPos.y }}>
           {selLayers.length === 1 && !selGroup && (
-            <>
+            <div className="tool-group" data-group="layer">
               <button type="button" title="层序↑" onClick={() => onMoveOrder(selLayers[0], "up")}>
                 ↑
               </button>
@@ -995,59 +982,73 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
               >
                 ✕
               </button>
-            </>
+            </div>
           )}
           {selLayers.length >= 2 && (
             <>
-              <button type="button" title="左对齐" onClick={() => align("left")}>
-                ⬅
-              </button>
-              <button type="button" title="水平中" onClick={() => align("centerX")}>
-                ⇹
-              </button>
-              <button type="button" title="右对齐" onClick={() => align("right")}>
-                ➡
-              </button>
-              <button type="button" title="顶对齐" onClick={() => align("top")}>
-                ⬆
-              </button>
-              <button type="button" title="垂直中" onClick={() => align("middleY")}>
-                ⇳
-              </button>
-              <button type="button" title="底对齐" onClick={() => align("bottom")}>
-                ⬇
-              </button>
-              <button
-                type="button"
-                className="primary icon-btn"
-                title="打组"
-                onClick={() => {
-                  stackNow(selLayers);
-                  onGroup(selLayers);
-                }}
-              >
-                <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden>
-                  <rect x="2" y="6" width="9" height="7" rx="1.2" stroke="currentColor" fill="none" />
-                  <rect x="4" y="3.5" width="9" height="7" rx="1.2" stroke="currentColor" fill="#fff" />
-                  <rect x="6" y="1.5" width="8" height="7" rx="1.2" stroke="currentColor" fill="#fff" />
-                </svg>
-              </button>
+              <div className="tool-group" data-group="order">
+                <button type="button" title="倒序" onClick={() => onReverseOrder?.(selLayers)}>
+                  ⇅
+                </button>
+                <button type="button" title="按序排布" onClick={layoutByOrder}>
+                  ≡↓
+                </button>
+              </div>
+              <div className="tool-group" data-group="align">
+                <button type="button" title="左对齐" onClick={() => align("left")}>
+                  ⬅
+                </button>
+                <button type="button" title="水平中" onClick={() => align("centerX")}>
+                  ⇹
+                </button>
+                <button type="button" title="右对齐" onClick={() => align("right")}>
+                  ➡
+                </button>
+                <button type="button" title="顶对齐" onClick={() => align("top")}>
+                  ⬆
+                </button>
+                <button type="button" title="垂直中" onClick={() => align("middleY")}>
+                  ⇳
+                </button>
+                <button type="button" title="底对齐" onClick={() => align("bottom")}>
+                  ⬇
+                </button>
+              </div>
+              <div className="tool-group" data-group="action">
+                <button
+                  type="button"
+                  className="primary icon-btn"
+                  title="打组"
+                  onClick={() => {
+                    stackNow(selLayers);
+                    onGroup(selLayers);
+                  }}
+                >
+                  <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden>
+                    <rect x="2" y="6" width="9" height="7" rx="1.2" stroke="currentColor" fill="none" />
+                    <rect x="4" y="3.5" width="9" height="7" rx="1.2" stroke="currentColor" fill="#fff" />
+                    <rect x="6" y="1.5" width="8" height="7" rx="1.2" stroke="currentColor" fill="#fff" />
+                  </svg>
+                </button>
+              </div>
             </>
           )}
           {selGroup && (
-            <button
-              type="button"
-              className="primary icon-btn"
-              title="解组"
-              onClick={() => onUngroup(selGroup)}
-            >
-              <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden>
-                <rect x="2" y="2" width="5" height="5" stroke="currentColor" fill="none" />
-                <rect x="9" y="2" width="5" height="5" stroke="currentColor" fill="none" />
-                <rect x="2" y="9" width="5" height="5" stroke="currentColor" fill="none" />
-                <rect x="9" y="9" width="5" height="5" stroke="currentColor" fill="none" />
-              </svg>
-            </button>
+            <div className="tool-group" data-group="action">
+              <button
+                type="button"
+                className="primary icon-btn"
+                title="解组"
+                onClick={() => onUngroup(selGroup)}
+              >
+                <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden>
+                  <rect x="2" y="2" width="5" height="5" stroke="currentColor" fill="none" />
+                  <rect x="9" y="2" width="5" height="5" stroke="currentColor" fill="none" />
+                  <rect x="2" y="9" width="5" height="5" stroke="currentColor" fill="none" />
+                  <rect x="9" y="9" width="5" height="5" stroke="currentColor" fill="none" />
+                </svg>
+              </button>
+            </div>
           )}
         </div>
       )}

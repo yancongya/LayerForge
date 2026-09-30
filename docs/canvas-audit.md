@@ -442,7 +442,7 @@ app 级 undo/redo 事务化 · 单选/多选浮动工具条与尺寸读数 · �
 
 - `python F:/LayerForge/.p0-layercore-check.py` → **PASS 9/9**（需先 `git restore projects/demo/layers.json` 保证 v2 源文件；验收会改 demo）。
 - `npx tsc --noEmit -p apps/web/tsconfig.json` → 干净；`npm run build` 通过。
-- `.p0-canvas-check.mjs`（dev server + Playwright）→ **8/8**：
+- `.p0-canvas-check.mjs`（dev server + Playwright）→ **9/9**：
   1. 拖位持久（拖 → 改名 → 切组映射 → 回画布 → 刷新，坐标保持；`layers.json` 有新 x/y）
   2. Ctrl+D / Ctrl+G / Ctrl+A+Delete 无僵尸卡、无影子组、无独立合成卡
   3. 单一工具条（`sel-tools=1`，无 ImageToolbar）；删除落盘
