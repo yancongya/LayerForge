@@ -291,7 +291,9 @@ app 级 undo/redo 事务化 · 单选/多选浮动工具条与尺寸读数 · �
 
 **已完成（本批）**：子集/组级 compose · 多列装箱 `packCards` · `opacity`（schema+compose+滑杆）· 组映射拖拽改 z · 组包络虚线 · 吸附 + 方向键 nudge · 缩放读数/100%/`⌘0`/zoomSteps · Minimap 开关 · 快捷键面板 · F5 自动化
 
-**仍 backlog**：`blend` 公式（multiply/screen）· overlay 收敛自定义 shape · app 级 undo 事务（现仅 `editor.run` 批）· 实时合成预览（E4）· 草稿恢复横幅 · 资源未就绪不卡死 · PSD/PPTX（E7）· Agent 可写面 `packages/canvas`（E8）
+**仍 backlog**：`blend`（产品已否决，不做）· overlay 彻底自定义 ShapeUtil · app 级 undo 事务（已做快照栈 Ctrl+Z）· 资源未就绪不卡死 · PSD/PPTX（E7）· Agent 可写面（E8）
+
+**本批追加完成**：undo 快照栈 + `replace-document` · 名字/序号改 text shape（去 name-layer）· flag/reorder 后防抖实时合成 · 草稿原图恢复横幅
 
 ### 修层能力（E2/E3，行业空白；**接入真模型时升 P0**）
 
