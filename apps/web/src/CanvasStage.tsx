@@ -435,7 +435,12 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
         return;
       }
       const cardEl = target.closest("[data-lf-card]") as HTMLElement | null;
-      const isPan = spaceRef.current || e.button === 1 || (!cardEl && e.button === 0);
+      // Pan only with space / middle button. Left-click empty = deselect, not pan.
+      const isPan = spaceRef.current || e.button === 1;
+      if (!isPan && !cardEl && e.button === 0) {
+        setSelected([]);
+        return;
+      }
       if (isPan) {
         panRef.current = {
           x: e.clientX,

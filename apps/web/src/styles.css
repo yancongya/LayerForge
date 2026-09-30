@@ -1199,10 +1199,10 @@ button {
 }
 .canvas-links {
   position: absolute;
-  left: -2000px;
-  top: -2000px;
-  width: 8000px;
-  height: 8000px;
+  left: 0;
+  top: 0;
+  width: 1px;
+  height: 1px;
   overflow: visible;
   pointer-events: none;
 }
