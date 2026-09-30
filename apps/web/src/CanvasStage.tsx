@@ -202,6 +202,10 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
   const [badges, setBadges] = useState<OrderBadge[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [toolPos, setToolPos] = useState<{ x: number; y: number } | null>(null);
+  /** When set, canvas shows this group's members (smart-object style). Esc exits. */
+  const [enteredGroupId, setEnteredGroupId] = useState<string | null>(null);
+  const enteredGroupRef = useRef<string | null>(null);
+  enteredGroupRef.current = enteredGroupId;
 
   const commitRename = (n: NameLabel, value: string) => {
     setEditingId(null);
@@ -215,6 +219,26 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
   groupsRef.current = groups;
   sourceRef.current = sourceUrl;
   compositeRef.current = compositeUrl;
+
+  const srcPosKey = `lf:srcpos:${projectId}`;
+  const readSrcPos = (): { x: number; y: number } | null => {
+    try {
+      const raw = localStorage.getItem(srcPosKey);
+      if (!raw) return null;
+      const p = JSON.parse(raw) as { x?: number; y?: number };
+      if (typeof p.x !== "number" || typeof p.y !== "number") return null;
+      return { x: p.x, y: p.y };
+    } catch {
+      return null;
+    }
+  };
+  const writeSrcPos = (x: number, y: number) => {
+    try {
+      localStorage.setItem(srcPosKey, JSON.stringify({ x, y }));
+    } catch {
+      /* private mode */
+    }
+  };
 
   useImperativeHandle(ref, () => ({
     fit: () => editorRef.current?.zoomToFit({ animation: { duration: 180 } }),
@@ -285,18 +309,28 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
       }
     };
     if (sourceRef.current) pin("source", "原图");
-    const freeSorted = layersRef.current
-      .filter((l) => !l.groupId)
-      .sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
-    freeSorted.forEach((layer, i) => {
-      pin(layer.id, layer.name, i + 1);
-    });
-    groupsRef.current
-      .slice()
-      .sort((a, b) => a.order - b.order || a.id.localeCompare(b.id))
-      .forEach((g, i) => {
-        pin(`group:${g.id}`, compositeRef.current ? `${g.name} · 合成预览` : g.name, i + 1);
+    const entered = enteredGroupRef.current;
+    if (entered) {
+      layersRef.current
+        .filter((l) => l.groupId === entered)
+        .sort((a, b) => a.order - b.order || a.id.localeCompare(b.id))
+        .forEach((layer, i) => {
+          pin(layer.id, layer.name, i + 1);
+        });
+    } else {
+      const freeSorted = layersRef.current
+        .filter((l) => !l.groupId)
+        .sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
+      freeSorted.forEach((layer, i) => {
+        pin(layer.id, layer.name, i + 1);
       });
+      groupsRef.current
+        .slice()
+        .sort((a, b) => a.order - b.order || a.id.localeCompare(b.id))
+        .forEach((g, i) => {
+          pin(`group:${g.id}`, compositeRef.current ? `${g.name} · 合成预览` : g.name, i + 1);
+        });
+    }
 
     const chips: Hub[] = [];
     for (const g of groupsRef.current) {
@@ -323,8 +357,10 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
       if (!editor || syncingRef.current) return;
       const layerItems: LayoutItem[] = [];
       const groupItems: LayoutItem[] = [];
+      const entered = enteredGroupRef.current;
       for (const layer of layersRef.current) {
-        if (layer.groupId) continue;
+        // Outside isolation skip grouped members; inside isolation save only those.
+        if (entered ? layer.groupId !== entered : layer.groupId) continue;
         const s = editor.getShape(imgId(layer.id)) as TLImageShape | undefined;
         if (!s) continue;
         layerItems.push({
@@ -340,6 +376,8 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
         if (!s) continue;
         groupItems.push({ id: g.id, x: s.x, y: s.y, w: s.props.w, h: s.props.h });
       }
+      const sSrc = editor.getShape(imgId("source")) as TLImageShape | undefined;
+      if (sSrc) writeSrcPos(sSrc.x, sSrc.y);
       if (!layerItems.length && !groupItems.length) return;
       const key = JSON.stringify({ l: layerItems, g: groupItems });
       if (key === lastSavedRef.current) return;
@@ -364,10 +402,14 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
         );
         const src = sourceRef.current;
         const composite = compositeRef.current;
-        const free = ordered.filter((l) => !l.groupId);
-        const liveGroups = groupsRef.current.filter((g) =>
-          ordered.some((l) => l.groupId === g.id),
-        );
+        const entered = enteredGroupRef.current;
+        // Isolation mode: show only that group's members; otherwise free layers + group cards.
+        const free = entered
+          ? ordered.filter((l) => l.groupId === entered)
+          : ordered.filter((l) => !l.groupId);
+        const liveGroups = entered
+          ? []
+          : groupsRef.current.filter((g) => ordered.some((l) => l.groupId === g.id));
 
         const wantedShapes = new Set<TLShapeId>();
         const wantedKeys: string[] = [];
@@ -454,8 +496,9 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
           }
         };
 
-        // Source: locked, free position (not persisted).
+        // Source card: draggable; position kept in localStorage (not layers.json).
         if (src) {
+          const savedSrc = readSrcPos();
           upsert(
             "source",
             "source",
@@ -463,8 +506,8 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
             "原图",
             cardBox(280, 373, 720, 960),
             { w: 720, h: 960 },
-            { x: eSrc?.x ?? -520, y: eSrc?.y ?? 40 },
-            true,
+            { x: eSrc?.x ?? savedSrc?.x ?? -520, y: eSrc?.y ?? savedSrc?.y ?? 40 },
+            false,
             1,
           );
         }
@@ -742,7 +785,7 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
     const editor = editorRef.current;
     if (editor) syncGraph(editor);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [layers, groups, sourceUrl, compositeUrl]);
+  }, [layers, groups, sourceUrl, compositeUrl, enteredGroupId]);
 
   return (
     <div className="canvas-stage" ref={rootRef}>
@@ -829,7 +872,17 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
 
           const root = editor.getContainer();
           const onDbl = (e: MouseEvent) => {
-            // Inline rename is owned by the name-stick overlay; never window.prompt.
+            // Double-click a group card → enter its member layer (smart-object style).
+            const target = editor.getSelectedShapes()[0];
+            const key = target ? metaOf(target).layerId : undefined;
+            if (key && String(key).startsWith("group:")) {
+              e.stopPropagation();
+              const gid = String(key).slice(6);
+              setEnteredGroupId(gid);
+              log.debug("tldraw", "enter group", { gid });
+              return;
+            }
+            // Rename stays on the name-stick overlay; never window.prompt.
             e.stopPropagation();
           };
           root.addEventListener("dblclick", onDbl, true);
@@ -861,7 +914,13 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
             if (e.button === 2) cancelIfBusy();
           };
           const onKey = (e: KeyboardEvent) => {
-            if (e.key === "Escape") cancelIfBusy();
+            if (e.key === "Escape") {
+              if (enteredGroupRef.current) {
+                setEnteredGroupId(null);
+                return;
+              }
+              cancelIfBusy();
+            }
           };
           root.addEventListener("contextmenu", onCtx, true);
           root.addEventListener("pointerdown", onDown, true);
@@ -940,6 +999,17 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
           </button>
         ))}
       </div>
+
+      {enteredGroupId && (
+        <div className="enter-chip">
+          <button type="button" onClick={() => setEnteredGroupId(null)}>
+            ← 退出组
+          </button>
+          <span>
+            {groupsRef.current.find((g) => g.id === enteredGroupId)?.name ?? enteredGroupId}
+          </span>
+        </div>
+      )}
 
       {(selLayers.length > 0 || selGroup) && toolPos && (
         <div
