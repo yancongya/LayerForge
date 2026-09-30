@@ -10,7 +10,7 @@ layers.json schema (project root) — version 3:
       "groupId": null,
       "x": 0, "y": 0, "w": 280, "h": 373,
       "imgW": 720, "imgH": 960,
-      "visible": true, "locked": false
+      "visible": true, "locked": false, "opacity": 1.0
     }
   ],
   "groups": [
@@ -32,6 +32,9 @@ Semantics that callers must respect:
   it to keep card aspect correct instead of assuming a fixed ratio.
 - ``visible=false`` excludes the layer from compose and from the composite
   export. ``locked`` is a canvas-only guard against accidental selection.
+- ``opacity`` is 0–1 (values outside are clamped) and multiplies that layer's
+  RGBA alpha at compose time. ``visible=false`` still wins: a hidden layer is
+  dropped entirely, not drawn at opacity 0.
 - ``rev`` is a monotonic revision bumped on every save. The web API and the MCP
   server are two independent writers of this file, so callers should read
   ``rev`` back after a mutation and treat a surprise value as a conflict.
@@ -74,6 +77,7 @@ class Layer:
     imgH: int = 0
     visible: bool = True
     locked: bool = False
+    opacity: float = 1.0
 
     @property
     def placed(self) -> bool:
@@ -151,6 +155,11 @@ def _bool(raw: dict[str, Any], key: str, default: bool) -> bool:
     return value
 
 
+def clamp_opacity(value: float) -> float:
+    """Opacity lives in [0, 1]; out-of-range values are clamped, not rejected."""
+    return max(0.0, min(1.0, float(value)))
+
+
 def card_size(img_w: int, img_h: int, card_w: float = DEFAULT_CARD_W) -> tuple[float, float]:
     """Card box that preserves the image aspect ratio (fixes the old 3:4 assumption)."""
     if img_w <= 0 or img_h <= 0:
@@ -196,6 +205,7 @@ def validate_layer(raw: dict[str, Any], index: int) -> Layer:
         imgH=img_h,
         visible=_bool(raw, "visible", True),
         locked=_bool(raw, "locked", False),
+        opacity=clamp_opacity(_num(raw, "opacity", 1.0)),
     )
 
 
@@ -486,6 +496,7 @@ def set_layer_flags(
     *,
     visible: bool | None = None,
     locked: bool | None = None,
+    opacity: float | None = None,
 ) -> ProjectLayers:
     doc.get_layer(layer_id)
     layers = [
@@ -493,6 +504,7 @@ def set_layer_flags(
             layer,
             visible=layer.visible if visible is None else visible,
             locked=layer.locked if locked is None else locked,
+            opacity=layer.opacity if opacity is None else clamp_opacity(opacity),
         )
         if layer.id == layer_id
         else layer

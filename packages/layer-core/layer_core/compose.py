@@ -21,6 +21,17 @@ def _load_rgba(path: Path) -> Image.Image:
     return Image.open(path).convert("RGBA")
 
 
+def _apply_opacity(img: Image.Image, opacity: float) -> Image.Image:
+    """Multiply this layer's RGBA alpha (normal blend). RGB is left as-is."""
+    if opacity >= 1.0:
+        return img
+    if opacity <= 0.0:
+        return Image.new("RGBA", img.size, (0, 0, 0, 0))
+    r, g, b, a = img.split()
+    a = a.point(lambda p: int(p * opacity))
+    return Image.merge("RGBA", (r, g, b, a))
+
+
 def _align_height(images: list[Image.Image]) -> list[Image.Image]:
     """Match combine_layers.py: scale so all images share min height."""
     if not images:
@@ -39,13 +50,18 @@ def _align_height(images: list[Image.Image]) -> list[Image.Image]:
 
 
 def compose_layers(project_root: Path | str, layers: list[Layer]) -> Image.Image:
-    """Stack the *visible* layers bottom→top. Canvas x/y/w/h is deliberately ignored."""
+    """Stack the *visible* layers bottom→top. Canvas x/y/w/h is deliberately ignored.
+
+    Per-layer ``opacity`` multiplies that layer's alpha before compositing;
+    ``visible=false`` still excludes the layer entirely.
+    """
     root = Path(project_root)
     ordered = visible_layers(layers)
     if not ordered:
         raise LayersError("no visible layers to compose")
     images = [_load_rgba(layer.resolved_path(root)) for layer in ordered]
     images = _align_height(images)
+    images = [_apply_opacity(img, layer.opacity) for img, layer in zip(images, ordered)]
     combined = images[0]
     for img in images[1:]:
         combined = Image.alpha_composite(combined, img)

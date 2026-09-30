@@ -9,6 +9,7 @@ Examples:
   python -m layer_core.cli compose projects/demo
   python -m layer_core.cli rename projects/demo bg "Background plate"
   python -m layer_core.cli flag projects/demo bg --visible 0
+  python -m layer_core.cli flag projects/demo fg --opacity 0.5
   python -m layer_core.cli delete projects/demo fg
   python -m layer_core.cli layout projects/demo '{"layers":[{"id":"bg","x":0,"y":0}]}'
   python -m layer_core.cli export projects/demo --out projects/demo/dist
@@ -140,14 +141,48 @@ def _flag(value: str | None) -> bool | None:
     return value.strip().lower() in ("1", "true", "yes", "on")
 
 
-def _cmd_flag(project: Path, layer_id: str, visible: str | None, locked: str | None) -> int:
-    if visible is None and locked is None:
-        raise LayersError("flag requires --visible and/or --locked")
+def _opacity(value: str | None) -> float | None:
+    if value is None:
+        return None
+    try:
+        number = float(value.strip())
+    except ValueError as exc:
+        raise LayersError(f"opacity must be a number 0–1, got {value!r}") from exc
+    return max(0.0, min(1.0, number))
+
+
+def _cmd_flag(
+    project: Path,
+    layer_id: str,
+    visible: str | None,
+    locked: str | None,
+    opacity: str | None,
+) -> int:
+    if visible is None and locked is None and opacity is None:
+        raise LayersError("flag requires --visible and/or --locked and/or --opacity")
+    parsed_opacity = _opacity(opacity)
     doc = load_layers_document(project)
     save_layers_document(
-        project, set_layer_flags(doc, layer_id, visible=_flag(visible), locked=_flag(locked))
+        project,
+        set_layer_flags(
+            doc,
+            layer_id,
+            visible=_flag(visible),
+            locked=_flag(locked),
+            opacity=parsed_opacity,
+        ),
     )
-    print(json.dumps({"flagged": layer_id, "visible": visible, "locked": locked}, ensure_ascii=False))
+    print(
+        json.dumps(
+            {
+                "flagged": layer_id,
+                "visible": visible,
+                "locked": locked,
+                "opacity": parsed_opacity if opacity is not None else None,
+            },
+            ensure_ascii=False,
+        )
+    )
     return 0
 
 
@@ -226,11 +261,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_del.add_argument("project", type=Path)
     p_del.add_argument("layer_id")
 
-    p_flag = sub.add_parser("flag", help="Set a layer's visible / locked flag")
+    p_flag = sub.add_parser("flag", help="Set a layer's visible / locked / opacity flags")
     p_flag.add_argument("project", type=Path)
     p_flag.add_argument("layer_id")
     p_flag.add_argument("--visible", default=None)
     p_flag.add_argument("--locked", default=None)
+    p_flag.add_argument("--opacity", default=None, help="0–1, clamped; multiplies layer alpha")
 
     p_layout = sub.add_parser("layout", help="Persist canvas x/y/w/h patches (compose ignores them)")
     p_layout.add_argument("project", type=Path)
@@ -273,7 +309,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "delete":
             return _cmd_delete(args.project, args.layer_id)
         if args.command == "flag":
-            return _cmd_flag(args.project, args.layer_id, args.visible, args.locked)
+            return _cmd_flag(args.project, args.layer_id, args.visible, args.locked, args.opacity)
         if args.command == "layout":
             return _cmd_layout(args.project, args.patches)
         if args.command == "export":

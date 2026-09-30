@@ -51,8 +51,9 @@ def main() -> int:
     assert d["rev"] == 1, d["rev"]
     base = next(layer for layer in d["layers"] if layer["id"] == "base")
     assert base["name"] == "底板", base
-    for key in ("x", "y", "w", "h", "imgW", "imgH", "visible", "locked"):
+    for key in ("x", "y", "w", "h", "imgW", "imgH", "visible", "locked", "opacity"):
         assert key in base, f"missing {key}"
+    assert base["opacity"] == 1.0, base
     checks.append("v2→v3 升级 + rename 落盘")
 
     # rev is monotonic across writers
@@ -143,6 +144,17 @@ def main() -> int:
     assert (sq["imgW"], sq["imgH"]) == (960, 960), sq
     assert sq["w"] == 280 and sq["h"] == 280, f"square image got a {sq['w']}x{sq['h']} card"
     checks.append("960×960 源图 → 280×280 卡（不再拉伸）")
+
+    # opacity multiplies layer alpha: 0.5 must change the composite vs 1.0
+    full = composite_hash()
+    cli("flag", str(PROJ), "fg", "--opacity", "0.5")
+    half = composite_hash()
+    assert half != full, "opacity=0.5 did not change the composite"
+    fg = next(layer for layer in doc()["layers"] if layer["id"] == "fg")
+    assert fg["opacity"] == 0.5, fg
+    cli("flag", str(PROJ), "fg", "--opacity", "1")
+    assert composite_hash() == full, "restoring opacity=1 did not restore the composite"
+    checks.append("opacity=0.5 改变合成结果")
 
     print("PASS")
     for line in checks:
