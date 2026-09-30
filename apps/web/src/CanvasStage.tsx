@@ -340,7 +340,9 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
         .slice()
         .sort((a, b) => a.order - b.order || a.id.localeCompare(b.id))
         .forEach((g, i) => {
-          pin(`group:${g.id}`, compositeRef.current ? `${g.name} · 合成预览` : g.name, i + 1);
+          const labeled =
+            g.previewUrl || compositeRef.current ? `${g.name} · 合成预览` : g.name;
+          pin(`group:${g.id}`, labeled, i + 1);
         });
     }
 
@@ -581,9 +583,9 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
           const g = c.group!;
           const gMembers = ordered.filter((l) => l.groupId === g.id);
           if (!gMembers.length) return;
-          // Cover = bottom-most member, or the composite preview once 合成 has run.
+          // Cover = this group's compose (P1-A); else full composite; else bottom member.
           const cover = gMembers[0];
-          const previewSrc = composite ?? cover.url;
+          const previewSrc = g.previewUrl ?? composite ?? cover.url;
           const box = cardBox(g.w, g.h, g.imgW || cover.imgW, g.imgH || cover.imgH);
           const placed = isPlaced(g.x, g.y, g.imgW || cover.imgW);
           const x = placed ? (g.x ?? 0) : rightEdge > 0 ? rightEdge + CARD_GAP : 0;
@@ -601,7 +603,7 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
             `group:${g.id}`,
             "layer",
             previewSrc,
-            composite ? `${g.name} · 合成预览` : g.name,
+            previewSrc !== cover.url ? `${g.name} · 合成预览` : g.name,
             box,
             { w: g.imgW || cover.imgW || 720, h: g.imgH || cover.imgH || 960 },
             { x, y },

@@ -209,6 +209,16 @@ async function main() {
     `labels=${JSON.stringify(groupLabels)} floatCard=${stillHasFloatCard}`,
   );
 
+  // P1-A: compose writes groups/<id>.png for the live group
+  {
+    const doc4 = readDoc();
+    const gid = (doc4.groups || []).map((g) => g.id)[0];
+    const previewPath = gid
+      ? `F:/LayerForge/projects/demo/groups/${gid}.png`
+      : null;
+    check("4b 组级合成文件", Boolean(gid) && fs.existsSync(previewPath), previewPath || "no group");
+  }
+
   // arrows must not leak across group/ungroup (locked arrows used to survive deleteShapes)
   const arrowIds = () =>
     page.evaluate(() =>
@@ -285,6 +295,8 @@ async function main() {
       multiTitles.includes("按序排布"),
     `badges=${JSON.stringify(badgeTexts)} single=${JSON.stringify(singleTitles)} multi=${JSON.stringify(multiTitles)}`,
   );
+
+  // P1-A covered in 4b while a group exists
 
   await page.screenshot({ path: "F:/LayerForge/.p0-canvas-check.png", fullPage: true });
   await browser.close();

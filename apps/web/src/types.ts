@@ -29,6 +29,8 @@ export type LayerGroup = {
   h?: number;
   imgW?: number;
   imgH?: number;
+  /** groups/<id>.png after compose (P1-A). */
+  previewUrl?: string | null;
 };
 
 export type ProjectPayload = {

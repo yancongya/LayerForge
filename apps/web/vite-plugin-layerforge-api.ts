@@ -173,7 +173,15 @@ function projectPayload(id: string) {
     rev: doc.rev,
     root: path.relative(REPO_ROOT, dir).replace(/\\/g, "/"),
     layers,
-    groups: doc.groups,
+    groups: doc.groups.map((g) => {
+      const preview = path.join(dir, "groups", `${g.id}.png`);
+      return {
+        ...g,
+        previewUrl: fs.existsSync(preview)
+          ? `/projects/${id}/groups/${g.id}.png?ts=${Date.now()}`
+          : null,
+      };
+    }),
     sourceUrl: sourceFile
       ? `/projects/${id}/${path.basename(sourceFile)}?ts=${Date.now()}`
       : null,
@@ -431,14 +439,35 @@ export function layerforgeApi(): Plugin {
             }
 
             if (method === "POST" && action === "compose") {
-              const result = await runLayerCore(["compose", projectDir(id)]);
-              if (!result.ok) {
-                json(res, 500, { error: result.stderr || result.stdout || "compose failed" });
+              const body = JSON.parse((await readBody(req)) || "{}") as {
+                group_id?: string;
+                layer_ids?: string[];
+              };
+              // Full composite always; each group also gets groups/<id>.png (P1-A).
+              const results: string[] = [];
+              const full = await runLayerCore(["compose", projectDir(id)]);
+              if (!full.ok) {
+                json(res, 500, { error: full.stderr || full.stdout || "compose failed" });
                 return;
+              }
+              results.push(full.stdout.trim());
+              const doc = readDocument(id);
+              const groupIds =
+                body.group_id != null && body.group_id !== ""
+                  ? [String(body.group_id)]
+                  : doc.groups.map((g) => g.id);
+              for (const gid of groupIds) {
+                const g = await runLayerCore([
+                  "compose",
+                  projectDir(id),
+                  "--group",
+                  gid,
+                ]);
+                if (g.ok) results.push(g.stdout.trim());
               }
               const payload = projectPayload(id);
               payload.compositeUrl = `/projects/${id}/composite.png?ts=${Date.now()}`;
-              json(res, 200, { ...payload, output: result.stdout });
+              json(res, 200, { ...payload, output: results.join("\n") });
               return;
             }
 

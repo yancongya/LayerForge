@@ -62,8 +62,19 @@ def _cmd_decompose(project: Path, source: Path, layer_count: int) -> int:
     return 0
 
 
-def _cmd_compose(project: Path, output: str) -> int:
-    out = compose_project(project, output_name=output)
+def _cmd_compose(
+    project: Path,
+    output: str,
+    ids: str | None = None,
+    group: str | None = None,
+) -> int:
+    from .compose import compose_group
+
+    if group:
+        out = compose_group(project, group)
+    else:
+        id_list = [p.strip() for p in ids.split(",") if p.strip()] if ids else None
+        out = compose_project(project, output_name=output, layer_ids=id_list)
     print(out)
     return 0
 
@@ -177,9 +188,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_dec.add_argument("--source", type=Path, required=True)
     p_dec.add_argument("--layers", type=int, default=3, dest="layer_count")
 
-    p_compose = sub.add_parser("compose", help="Write composite.png")
+    p_compose = sub.add_parser("compose", help="Write composite.png (or a subset / group)")
     p_compose.add_argument("project", type=Path)
     p_compose.add_argument("--output", default="composite.png")
+    p_compose.add_argument("--ids", default=None, help="comma-separated layer ids (subset)")
+    p_compose.add_argument("--group", default=None, help="compose this group's members to groups/<id>.png")
 
     p_reorder = sub.add_parser("reorder", help="Set bottom-to-top order by id list")
     p_reorder.add_argument("project", type=Path)
@@ -239,7 +252,12 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "decompose":
             return _cmd_decompose(args.project, args.source, args.layer_count)
         if args.command == "compose":
-            return _cmd_compose(args.project, args.output)
+            return _cmd_compose(
+                args.project,
+                args.output,
+                ids=getattr(args, "ids", None),
+                group=getattr(args, "group", None),
+            )
         if args.command == "reorder":
             return _cmd_reorder(args.project, args.order)
         if args.command == "group":
