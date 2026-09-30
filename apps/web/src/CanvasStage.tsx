@@ -163,8 +163,8 @@ function ensureAsset(
 }
 
 type Hub = { key: string; x: number; y: number; groupId: string };
-type NameLabel = { key: string; name: string; x: number; y: number; w: number };
-type OrderBadge = { key: string; n: number; x: number; y: number };
+type NameLabel = { key: string; name: string; x: number; y: number; w: number; dim?: boolean };
+type OrderBadge = { key: string; n: number; x: number; y: number; dim?: boolean };
 
 const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
   {
@@ -287,7 +287,7 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
     if (!editor) return;
     const collected: NameLabel[] = [];
     const orderBadges: OrderBadge[] = [];
-    const pin = (key: string, name: string, orderN?: number) => {
+    const pin = (key: string, name: string, orderN?: number, dim = false) => {
       const el = rootRef.current?.querySelector(`[data-shape-id="${imgId(key)}"]`);
       if (!el || !rootRef.current) return;
       const wr = rootRef.current.getBoundingClientRect();
@@ -298,6 +298,7 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
         x: r.left - wr.left,
         y: r.bottom - wr.top + 2,
         w: r.width,
+        dim,
       });
       if (orderN != null) {
         orderBadges.push({
@@ -305,17 +306,28 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
           n: orderN,
           x: r.left - wr.left + 8,
           y: r.top - wr.top + 8,
+          dim,
         });
       }
     };
-    if (sourceRef.current) pin("source", "原图");
     const entered = enteredGroupRef.current;
+    if (sourceRef.current) pin("source", "原图", undefined, Boolean(entered));
     if (entered) {
       layersRef.current
         .filter((l) => l.groupId === entered)
         .sort((a, b) => a.order - b.order || a.id.localeCompare(b.id))
         .forEach((layer, i) => {
-          pin(layer.id, layer.name, i + 1);
+          pin(layer.id, layer.name, i + 1, false);
+        });
+      layersRef.current
+        .filter((l) => !l.groupId)
+        .forEach((layer) => {
+          pin(layer.id, layer.name, undefined, true);
+        });
+      groupsRef.current
+        .filter((g) => g.id !== entered)
+        .forEach((g) => {
+          pin(`group:${g.id}`, g.name, undefined, true);
         });
     } else {
       const freeSorted = layersRef.current
@@ -403,13 +415,27 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
         const src = sourceRef.current;
         const composite = compositeRef.current;
         const entered = enteredGroupRef.current;
-        // Isolation mode: show only that group's members; otherwise free layers + group cards.
-        const free = entered
-          ? ordered.filter((l) => l.groupId === entered)
-          : ordered.filter((l) => !l.groupId);
-        const liveGroups = entered
-          ? []
-          : groupsRef.current.filter((g) => ordered.some((l) => l.groupId === g.id));
+
+        // Isolation keeps the whole board visible; non-members are dimmed + locked.
+        const members = entered ? ordered.filter((l) => l.groupId === entered) : [];
+        const freeLayers = ordered.filter((l) => !l.groupId);
+        const shownGroups = groupsRef.current.filter((g) =>
+          ordered.some((l) => l.groupId === g.id),
+        );
+        // bright = operable; dim = grayed out and locked
+        const brightKeys = new Set<string>(members.map((l) => l.id));
+        const cards: Array<{ layer?: Layer; group?: LayerGroup; dim: boolean }> = [];
+        if (!entered) {
+          for (const l of freeLayers) cards.push({ layer: l, dim: false });
+          for (const g of shownGroups) cards.push({ group: g, dim: false });
+        } else {
+          for (const l of members) cards.push({ layer: l, dim: false });
+          for (const l of freeLayers) cards.push({ layer: l, dim: true });
+          for (const g of shownGroups) {
+            if (g.id === entered) continue; // wrapper card hidden while inside
+            cards.push({ group: g, dim: true });
+          }
+        }
 
         const wantedShapes = new Set<TLShapeId>();
         const wantedKeys: string[] = [];
@@ -418,13 +444,12 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
           wantedShapes.add(imgId(key));
         };
         if (src) track("source");
-        for (const l of free) track(l.id);
-        for (const g of liveGroups) track(`group:${g.id}`);
-
-        const targets = [
-          ...free.map((l) => l.id),
-          ...liveGroups.map((g) => `group:${g.id}`),
-        ];
+        const targets: string[] = [];
+        for (const c of cards) {
+          const key = c.layer ? c.layer.id : `group:${c.group!.id}`;
+          track(key);
+          targets.push(key);
+        }
         if (src) {
           for (const t of targets) {
             wantedShapes.add(arrowId(t));
@@ -497,6 +522,7 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
         };
 
         // Source card: draggable; position kept in localStorage (not layers.json).
+        // Inside isolation it is dimmed + locked like any other non-member.
         if (src) {
           const savedSrc = readSrcPos();
           upsert(
@@ -507,8 +533,8 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
             cardBox(280, 373, 720, 960),
             { w: 720, h: 960 },
             { x: eSrc?.x ?? savedSrc?.x ?? -520, y: eSrc?.y ?? savedSrc?.y ?? 40 },
-            false,
-            1,
+            Boolean(entered),
+            entered ? 0.22 : 1,
           );
         }
 
@@ -518,42 +544,45 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
           rightEdge = Math.max(rightEdge, x + w);
         };
 
-        free.forEach((layer) => {
-          const box = cardBox(layer.w, layer.h, layer.imgW, layer.imgH);
-          const placed = isPlaced(layer.x, layer.y, layer.imgW);
-          const x = placed ? (layer.x ?? 0) : rightEdge > 0 ? rightEdge + CARD_GAP : 0;
-          const y = placed ? (layer.y ?? 0) : 0;
-          if (!placed && !wroteBackRef.current.has(layer.id)) {
-            wroteBackRef.current.add(layer.id);
-            const patch = { id: layer.id, x, y, w: box.w, h: box.h };
-            queueMicrotask(() => {
-              lastSavedRef.current = JSON.stringify({
-                l: [patch],
-                g: [],
+        cards.forEach((c) => {
+          if (c.layer) {
+            const layer = c.layer;
+            const box = cardBox(layer.w, layer.h, layer.imgW, layer.imgH);
+            const placed = isPlaced(layer.x, layer.y, layer.imgW);
+            const x = placed ? (layer.x ?? 0) : rightEdge > 0 ? rightEdge + CARD_GAP : 0;
+            const y = placed ? (layer.y ?? 0) : 0;
+            if (!placed && !wroteBackRef.current.has(layer.id)) {
+              wroteBackRef.current.add(layer.id);
+              const patch = { id: layer.id, x, y, w: box.w, h: box.h };
+              queueMicrotask(() => {
+                lastSavedRef.current = JSON.stringify({
+                  l: [patch],
+                  g: [],
+                });
+                onSaveLayout?.([patch], []);
               });
-              onSaveLayout?.([patch], []);
-            });
+            }
+            noteBox(x, box.w);
+            const dim = c.dim;
+            const baseOp = layer.visible === false ? 0.35 : 1;
+            upsert(
+              layer.id,
+              "layer",
+              layer.url,
+              layer.name,
+              box,
+              { w: layer.imgW || 720, h: layer.imgH || 960 },
+              { x, y },
+              dim || Boolean(layer.locked),
+              dim ? 0.22 : baseOp,
+            );
+            return;
           }
-          noteBox(x, box.w);
-          upsert(
-            layer.id,
-            "layer",
-            layer.url,
-            layer.name,
-            box,
-            { w: layer.imgW || 720, h: layer.imgH || 960 },
-            { x, y },
-            Boolean(layer.locked),
-            layer.visible === false ? 0.35 : 1,
-          );
-        });
-
-        liveGroups.forEach((g) => {
-          const members = ordered.filter((l) => l.groupId === g.id);
-          if (!members.length) return;
+          const g = c.group!;
+          const gMembers = ordered.filter((l) => l.groupId === g.id);
+          if (!gMembers.length) return;
           // Cover = bottom-most member, or the composite preview once 合成 has run.
-          // Product: F4 preview lives on the group card — no free-floating composite node.
-          const cover = members[0];
+          const cover = gMembers[0];
           const previewSrc = composite ?? cover.url;
           const box = cardBox(g.w, g.h, g.imgW || cover.imgW, g.imgH || cover.imgH);
           const placed = isPlaced(g.x, g.y, g.imgW || cover.imgW);
@@ -576,10 +605,32 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
             box,
             { w: g.imgW || cover.imgW || 720, h: g.imgH || cover.imgH || 960 },
             { x, y },
-            false,
-            1,
+            c.dim,
+            c.dim ? 0.18 : 1,
           );
         });
+
+        // Isolation styling pass: force dim + lock on every non-member shape.
+        // Arrows use the target key as layerId, so the same brightKeys check works.
+        if (entered) {
+          editor.run(() => {
+            for (const shape of editor.getCurrentPageShapes()) {
+              const key = metaOf(shape).layerId ?? "";
+              const dim = !brightKeys.has(key);
+              const wantOpacity = dim ? 0.18 : 1;
+              const wantLock = dim ? true : shape.type === "arrow";
+              const curOp = shape.opacity ?? 1;
+              if (Math.abs(curOp - wantOpacity) > 0.01 || Boolean(shape.isLocked) !== wantLock) {
+                editor.updateShape({
+                  id: shape.id,
+                  type: shape.type,
+                  isLocked: wantLock,
+                  opacity: wantOpacity,
+                } as never);
+              }
+            }
+          });
+        }
 
         // Arrows: source → free layers + group cards.
         if (src) {
@@ -592,6 +643,7 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
             const sy = sImg.y + sImg.props.h / 2;
             const ex = tImg.x;
             const ey = tImg.y + tImg.props.h / 2;
+            const arrowOpacity = !entered || brightKeys.has(t) ? 1 : 0.18;
             if (!editor.getShape(aId)) {
               editor.createShape<TLArrowShape>({
                 id: aId,
@@ -599,6 +651,7 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
                 x: sx,
                 y: sy,
                 isLocked: true,
+                opacity: arrowOpacity,
                 props: {
                   kind: "arc",
                   color: "black",
@@ -618,6 +671,7 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
                 id: aId,
                 type: "arrow",
                 isLocked: true,
+                opacity: arrowOpacity,
                 props: {
                   ...editor.getShape(aId)!.props,
                   end: { x: ex - sx, y: ey - sy },
@@ -966,7 +1020,7 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
           ) : (
             <div
               key={n.key}
-              className="name-stick"
+              className={n.dim ? "name-stick dim" : "name-stick"}
               style={{ left: n.x, top: n.y, width: n.w }}
               onDoubleClick={(e) => {
                 e.stopPropagation();
@@ -986,7 +1040,11 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
       </div>
       <div className="order-layer" aria-hidden>
         {badges.map((b) => (
-          <div key={b.key} className="order-badge" style={{ left: b.x, top: b.y }}>
+          <div
+            key={b.key}
+            className={b.dim ? "order-badge dim" : "order-badge"}
+            style={{ left: b.x, top: b.y }}
+          >
             {b.n}
           </div>
         ))}

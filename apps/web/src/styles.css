@@ -1075,3 +1075,18 @@ button {
   background: var(--surface);
   cursor: pointer;
 }
+
+/* group isolation: gray-white wash over non-member content */
+.isolation-veil {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  background: rgba(244, 244, 246, 0.58);
+  backdrop-filter: grayscale(0.45) brightness(1.06);
+  -webkit-backdrop-filter: grayscale(0.45) brightness(1.06);
+  pointer-events: none;
+}
+.name-stick.dim,
+.order-badge.dim {
+  opacity: 0.35;
+}
