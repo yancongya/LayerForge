@@ -513,13 +513,13 @@ button {
   pointer-events: none;
 }
 
-/* selection toolbar — vertical, grouped (order | align | action) */
+/* selection toolbar — horizontal, grouped (order | align | action) */
 .sel-tools {
   position: absolute;
   z-index: 8;
   display: flex;
-  flex-direction: column;
-  align-items: stretch;
+  flex-direction: row;
+  align-items: center;
   gap: 0;
   padding: 4px;
   border-radius: 10px;
@@ -530,12 +530,15 @@ button {
 }
 .sel-tools .tool-group {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
+  align-items: center;
   gap: 3px;
-  padding: 3px 2px;
+  padding: 2px 4px;
 }
 .sel-tools .tool-group + .tool-group {
-  border-top: 1px solid var(--line);
+  border-left: 1px solid var(--line);
+  margin-left: 2px;
+  padding-left: 6px;
 }
 .sel-tools .tool-group[data-group="order"] button {
   background: #f4f4f5;
@@ -557,8 +560,7 @@ button {
 }
 .sel-tools button {
   height: 30px;
-  min-width: 36px;
-  width: 100%;
+  min-width: 30px;
   padding: 0 8px;
   border-radius: 8px;
   border: 1px solid var(--line);

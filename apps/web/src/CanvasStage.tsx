@@ -658,10 +658,11 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
     const groupCard = gid ? (editor.getShape(imgId(`group:${gid}`)) as TLImageShape | undefined) : null;
     const all = groupCard ? [...shapes, groupCard] : shapes;
     if (all.length) {
+      const minX = Math.min(...all.map((s) => s.x));
       const maxX = Math.max(...all.map((s) => s.x + s.props.w));
       const minY = Math.min(...all.map((s) => s.y));
-      // Vertical toolbar sits on the right of the selection (not a long horizontal bar).
-      const p = editor.pageToScreen({ x: maxX + 10, y: minY });
+      // Horizontal toolbar centered above the selection.
+      const p = editor.pageToScreen({ x: (minX + maxX) / 2, y: minY - 12 });
       setToolPos({ x: p.x, y: p.y });
     } else {
       setToolPos(null);
@@ -941,7 +942,10 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
       </div>
 
       {(selLayers.length > 0 || selGroup) && toolPos && (
-        <div className="sel-tools" style={{ left: toolPos.x, top: toolPos.y }}>
+        <div
+          className="sel-tools"
+          style={{ left: toolPos.x, top: toolPos.y, transform: "translate(-50%, -100%)" }}
+        >
           {selLayers.length === 1 && !selGroup && (
             <div className="tool-group" data-group="layer">
               <button type="button" title="层序↑" onClick={() => onMoveOrder(selLayers[0], "up")}>
