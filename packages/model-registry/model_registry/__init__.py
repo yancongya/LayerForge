@@ -1,3 +1,12 @@
+from .config import (
+    HttpProviderConfig,
+    LocalProviderConfig,
+    MockProviderConfig,
+    ModelConfig,
+    ModelConfigError,
+    load_model_config,
+    save_model_config,
+)
 from .providers import (
     LayeredDecomposeParams,
     LayeredEditParams,
@@ -11,10 +20,17 @@ from .providers import (
     list_providers,
     mock_decompose_info,
 )
+from .runner import DecomposeError, run_decompose
 
 __all__ = [
+    "DecomposeError",
+    "HttpProviderConfig",
     "LayeredDecomposeParams",
     "LayeredEditParams",
+    "LocalProviderConfig",
+    "MockProviderConfig",
+    "ModelConfig",
+    "ModelConfigError",
     "ModelRegistryError",
     "PROVIDERS",
     "ProviderSpec",
@@ -23,5 +39,8 @@ __all__ = [
     "describe_provider",
     "get_provider",
     "list_providers",
+    "load_model_config",
     "mock_decompose_info",
+    "run_decompose",
+    "save_model_config",
 ]

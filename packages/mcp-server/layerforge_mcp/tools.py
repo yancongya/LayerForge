@@ -115,11 +115,20 @@ def handle_export_layers(params: dict[str, Any]) -> Any:
     return _ok(project=str(root), out_dir=str(out_dir), files=[str(path) for path in created])
 
 
-def handle_decompose(params: dict[str, Any]) -> Any:
-    """Mock decompose: copies/normalizes a source image into a 2-layer stub project.
+def _ensure_model_registry() -> None:
+    import sys
 
-    Real Qwen-Image-Layered inference is intentionally NOT wired in the MVP.
-    """
+    for cand in (
+        Path(__file__).resolve().parents[2] / "model-registry",
+        Path(__file__).resolve().parents[2] / "layer-core",
+    ):
+        text = str(cand)
+        if cand.is_dir() and text not in sys.path:
+            sys.path.insert(0, text)
+
+
+def handle_decompose(params: dict[str, Any]) -> Any:
+    """Decompose via model-registry (http | local | mock fallback)."""
     root = _resolve_project(params)
     source = params.get("image")
     if not source or not isinstance(source, str):
@@ -128,39 +137,123 @@ def handle_decompose(params: dict[str, Any]) -> Any:
     if not src.is_file():
         raise ValueError(f"image not found: {src}")
 
-    layers_dir = root / "layers"
-    layers_dir.mkdir(parents=True, exist_ok=True)
+    _ensure_model_registry()
+    from model_registry import run_decompose
+    from layer_core.decompose import mock_decompose  # type: ignore
 
-    # Mock split: copy source as "base" layer and write a transparent accent layer.
-    base_rel = "layers/base.png"
-    accent_rel = "layers/accent.png"
-    shutil.copy2(src, root / base_rel)
+    raw_params = params.get("params") or {}
+    try:
+        result = run_decompose(src, root / "layers", raw_params)
+    except Exception as exc:  # noqa: BLE001
+        raise ValueError(f"decompose failed: {exc}") from exc
 
-    from PIL import Image, ImageDraw
+    # Always leave a valid layers.json for the app (prefer layer-core mock layout if empty)
+    layers_file = root / "layers.json"
+    if not layers_file.is_file():
+        mock_decompose(root, src, layer_count=int(raw_params.get("layer") or 3))
+        files = result.get("files") or []
+        if files:
+            # Keep semantic stack: base=bottom … fg=top (do not use glob order).
+            rank = {"base": 0, "mid": 1, "fg": 2}
+            ordered = sorted(
+                enumerate(files),
+                key=lambda pair: (rank.get(Path(pair[1]).stem, 10 + pair[0]), pair[0]),
+            )
+            mock_layers = [
+                Layer(id=Path(name).stem, name=Path(name).stem, file=f"layers/{name}", order=i)
+                for i, (_, name) in enumerate(ordered)
+            ]
+            save_layers(root, mock_layers)
 
-    with Image.open(root / base_rel) as img:
-        size = img.size
-    accent = Image.new("RGBA", size, (0, 0, 0, 0))
-    draw = ImageDraw.Draw(accent)
-    margin = max(8, min(size) // 20)
-    draw.rectangle(
-        (margin, margin, size[0] - margin, margin * 3),
-        fill=(255, 200, 80, 180),
-    )
-    accent.save(root / accent_rel)
-
-    mock_layers = [
-        Layer(id="base", name="Base (mock)", file=base_rel, order=0),
-        Layer(id="accent", name="Accent (mock)", file=accent_rel, order=1),
-    ]
-    save_layers(root, mock_layers)
+    layers = sort_layers_bottom_to_top(load_layers(root))
     return _ok(
         project=str(root),
-        mock=True,
-        provider="mock/layered-v0",
-        layers=[_layer_dict(layer) for layer in mock_layers],
-        note="decompose is mocked in MVP; wire packages/model-registry later",
+        provider=result.get("provider"),
+        status=result.get("status"),
+        files=result.get("files"),
+        fallback_reason=result.get("fallback_reason"),
+        layers=[_layer_dict(layer) for layer in layers],
     )
+
+
+def handle_model_config(params: dict[str, Any]) -> Any:
+    """Read or update model provider config (local / http / mock)."""
+    _ensure_model_registry()
+    from model_registry import (
+        HttpProviderConfig,
+        LocalProviderConfig,
+        ModelConfig,
+        MockProviderConfig,
+        load_model_config,
+        save_model_config,
+    )
+
+    path = params.get("config_path")
+    cfg = load_model_config(Path(path) if path else None)
+
+    if params.get("set_active"):
+        new_id = str(params["set_active"])
+        if new_id not in cfg.providers:
+            raise ValueError(f"unknown provider id: {new_id} (have {sorted(cfg.providers)})")
+        cfg.active = new_id
+        saved = save_model_config(cfg, Path(path) if path else None)
+        return _ok(active=cfg.active, saved=str(saved))
+
+    providers = params.get("providers")
+    if providers and isinstance(providers, dict):
+        for pid, spec in providers.items():
+            kind = (spec or {}).get("kind", "mock")
+            if kind == "http":
+                cfg.providers[pid] = HttpProviderConfig(
+                    id=pid,
+                    base_url=str(spec.get("base_url") or ""),
+                    api_key_env=str(spec.get("api_key_env") or "LAYERFORGE_API_KEY"),
+                    endpoint=str(spec.get("endpoint") or "/decompose"),
+                    timeout_s=float(spec.get("timeout_s") or 120),
+                    headers=dict(spec.get("headers") or {}),
+                )
+            elif kind == "local":
+                cfg.providers[pid] = LocalProviderConfig(
+                    id=pid,
+                    model_id=str(spec.get("model_id") or "Qwen/Qwen-Image-Layered"),
+                    device=str(spec.get("device") or "cuda"),
+                    dtype=str(spec.get("dtype") or "bfloat16"),
+                    local_files_only=bool(spec.get("local_files_only") or False),
+                )
+            else:
+                cfg.providers[pid] = MockProviderConfig(id=pid)
+        saved = save_model_config(cfg, Path(path) if path else None)
+        return _ok(active=cfg.active, saved=str(saved), providers=sorted(cfg.providers))
+
+    # read-only snapshot
+    snap = {
+        "active": cfg.active,
+        "providers": {
+            pid: {
+                "kind": getattr(p, "kind", "mock"),
+                **(
+                    {
+                        "base_url": p.base_url,
+                        "endpoint": p.endpoint,
+                        "api_key_env": p.api_key_env,
+                    }
+                    if isinstance(p, HttpProviderConfig)
+                    else {}
+                ),
+                **(
+                    {
+                        "model_id": p.model_id,
+                        "device": p.device,
+                        "dtype": p.dtype,
+                    }
+                    if isinstance(p, LocalProviderConfig)
+                    else {}
+                ),
+            }
+            for pid, p in cfg.providers.items()
+        },
+    }
+    return _ok(**snap)
 
 
 def handle_ping(params: dict[str, Any]) -> Any:
@@ -243,17 +336,38 @@ TOOLS: list[ToolSpec] = [
     ),
     ToolSpec(
         name="decompose",
-        description="MOCK layered decompose. Creates a 2-layer stub project from a source image. Real model not wired in MVP.",
+        description="Layered decompose via model-registry (http | local | mock fallback). Writes layers/ + layers.json.",
         input_schema={
             "type": "object",
             "properties": {
                 "project": PROJECT_PROP,
                 "image": {"type": "string", "description": "Path to source image (png/jpg)"},
+                "params": {
+                    "type": "object",
+                    "description": "Optional LayeredDecomposeParams (layer, seed, resolution, …)",
+                },
             },
             "required": ["project", "image"],
             "additionalProperties": False,
         },
         handler=handle_decompose,
+    ),
+    ToolSpec(
+        name="model_config",
+        description="Read or update model provider settings (mock | http API | local Qwen weights). set_active switches provider; providers object upserts entries.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "config_path": {"type": "string", "description": "optional models.json path"},
+                "set_active": {"type": "string", "description": "provider id to activate"},
+                "providers": {
+                    "type": "object",
+                    "description": "map id → {kind: mock|http|local, ...}",
+                },
+            },
+            "additionalProperties": False,
+        },
+        handler=handle_model_config,
     ),
 ]
 

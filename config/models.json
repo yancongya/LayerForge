@@ -1,0 +1,22 @@
+{
+  "active": "mock/layered-v0",
+  "providers": {
+    "mock/layered-v0": {
+      "kind": "mock"
+    },
+    "http/decompose": {
+      "kind": "http",
+      "base_url": "http://127.0.0.1:8000",
+      "api_key_env": "LAYERFORGE_API_KEY",
+      "endpoint": "/decompose",
+      "timeout_s": 120
+    },
+    "local/qwen-layered": {
+      "kind": "local",
+      "model_id": "Qwen/Qwen-Image-Layered",
+      "device": "cuda",
+      "dtype": "bfloat16",
+      "local_files_only": false
+    }
+  }
+}
