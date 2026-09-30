@@ -404,6 +404,15 @@ def save_layers(project_root: Path | str, layers: list[Layer], groups: list[Laye
     return save_layers_document(project_root, doc)
 
 
+def replace_layers_document(project_root: Path | str, data: dict[str, Any]) -> Path:
+    """Write a full document (undo/restore). Validates via parse_layers_document.
+
+    ``data`` is the on-disk shape: {version?, rev?, layers, groups?}.
+    """
+    doc = parse_layers_document(data)
+    return save_layers_document(project_root, doc)
+
+
 def reorder_layers(layers: list[Layer], id_order: list[str]) -> list[Layer]:
     """Reassign order so id_order is bottom→top. Every id must appear exactly once."""
     current = {layer.id: layer for layer in layers}

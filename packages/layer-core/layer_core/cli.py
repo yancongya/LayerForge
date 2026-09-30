@@ -35,6 +35,7 @@ from .layers import (
     rename_group,
     rename_layer,
     reorder_layers,
+    replace_layers_document,
     save_layers_document,
     set_group_collapsed,
     set_layer_flags,
@@ -203,6 +204,19 @@ def _cmd_layout(project: Path, patches_json: str) -> int:
     return 0
 
 
+def _cmd_replace_document(project: Path, payload_json: str) -> int:
+    try:
+        data = json.loads(payload_json)
+    except json.JSONDecodeError as exc:
+        raise LayersError(f"invalid document JSON: {exc}") from exc
+    if not isinstance(data, dict):
+        raise LayersError("document JSON must be an object")
+    replace_layers_document(project, data)
+    doc = load_layers_document(project)
+    print(json.dumps(_doc_payload(doc), ensure_ascii=False))
+    return 0
+
+
 def _cmd_export(project: Path, out_dir: Path, formats: list[str]) -> int:
     doc = load_layers_document(project)
     created = export_layers(project, doc.layers, out_dir, formats=tuple(formats))
@@ -276,6 +290,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_export.add_argument("project", type=Path)
     p_export.add_argument("--out", type=Path, required=True)
     p_export.add_argument("--formats", default="png-seq,zip,composite")
+
+    p_doc = sub.add_parser("replace-document", help="Replace layers.json (undo restore)")
+    p_doc.add_argument("project", type=Path)
+    p_doc.add_argument("payload", help='JSON: {"layers":[...],"groups":[...]}')
     return parser
 
 
@@ -312,6 +330,8 @@ def main(argv: list[str] | None = None) -> int:
             return _cmd_flag(args.project, args.layer_id, args.visible, args.locked, args.opacity)
         if args.command == "layout":
             return _cmd_layout(args.project, args.patches)
+        if args.command == "replace-document":
+            return _cmd_replace_document(args.project, args.payload)
         if args.command == "export":
             formats = [item.strip() for item in args.formats.split(",") if item.strip()]
             return _cmd_export(args.project, args.out, formats)

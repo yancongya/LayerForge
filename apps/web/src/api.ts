@@ -125,6 +125,17 @@ export function setLayerFlags(
 
 export type LayoutPatch = { id: string; x: number; y: number; w?: number; h?: number };
 
+export function replaceDocument(
+  id: string,
+  layers: unknown[],
+  groups: unknown[] = [],
+) {
+  return request<ProjectPayload>(`/api/projects/${encodeURIComponent(id)}/document`, {
+    method: "POST",
+    body: JSON.stringify({ layers, groups }),
+  });
+}
+
 export function saveLayout(
   id: string,
   layers: LayoutPatch[],

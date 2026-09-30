@@ -411,6 +411,24 @@ export function layerforgeApi(): Plugin {
               return;
             }
 
+            if (method === "POST" && action === "document") {
+              const body = JSON.parse((await readBody(req)) || "{}") as {
+                layers?: unknown[];
+                groups?: unknown[];
+              };
+              const result = await runLayerCore([
+                "replace-document",
+                projectDir(id),
+                JSON.stringify({ layers: body.layers ?? [], groups: body.groups ?? [] }),
+              ]);
+              if (!result.ok) {
+                json(res, 500, { error: result.stderr || result.stdout || "replace-document failed" });
+                return;
+              }
+              json(res, 200, projectPayload(id));
+              return;
+            }
+
             if (method === "POST" && action === "layout") {
               const body = JSON.parse((await readBody(req)) || "{}") as {
                 layers?: Array<{ id?: string; x?: number; y?: number; w?: number; h?: number }>;
