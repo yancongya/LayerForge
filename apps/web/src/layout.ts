@@ -110,3 +110,55 @@ export function explodeLayout(layerCount: number): ExplodeLayout {
     layers: units.filter((u) => u.role === "layer"),
   };
 }
+
+/**
+ * Multi-column pack for real canvas cards (P1-B).
+ * Same lane heuristic as explodeLayout: 2–5 columns, load-balanced by height,
+ * deterministic top→bottom / left→right. Used by sel-tools「多列」.
+ */
+export function packCards(
+  cards: Array<{ id: string; w: number; h: number }>,
+  opts: { gap?: number } = {},
+): Array<{ id: string; x: number; y: number }> {
+  const gap = opts.gap ?? 48;
+  const n = cards.length;
+  if (n === 0) return [];
+  const laneCount = Math.max(1, Math.min(5, Math.ceil(n / 3) || 1));
+  const lanes: Array<Array<{ id: string; w: number; h: number }>> = Array.from(
+    { length: laneCount },
+    () => [],
+  );
+  const heights = Array(laneCount).fill(0);
+  for (const card of cards) {
+    let best = 0;
+    let bestScore = Infinity;
+    for (let i = 0; i < laneCount; i++) {
+      const score = heights[i] + (i === 0 ? 0.15 : 0);
+      if (score < bestScore) {
+        bestScore = score;
+        best = i;
+      }
+    }
+    lanes[best].push(card);
+    heights[best] += card.h + gap;
+  }
+
+  // Column x: accumulate max width per lane so cards in a lane share x.
+  const laneX: number[] = [];
+  let x = 0;
+  for (const lane of lanes) {
+    laneX.push(x);
+    const maxW = lane.reduce((m, c) => Math.max(m, c.w), 0);
+    x += maxW + gap;
+  }
+
+  const out: Array<{ id: string; x: number; y: number }> = [];
+  lanes.forEach((lane, li) => {
+    let y = 0;
+    for (const card of lane) {
+      out.push({ id: card.id, x: laneX[li], y });
+      y += card.h + gap;
+    }
+  });
+  return out;
+}

@@ -292,7 +292,8 @@ async function main() {
     badgeTexts.length > 0 &&
       !singleHasSort &&
       multiTitles.includes("倒序") &&
-      multiTitles.includes("按序排布"),
+      multiTitles.includes("按序排布") &&
+      multiTitles.includes("多列排布"),
     `badges=${JSON.stringify(badgeTexts)} single=${JSON.stringify(singleTitles)} multi=${JSON.stringify(multiTitles)}`,
   );
 

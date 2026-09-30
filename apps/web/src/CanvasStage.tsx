@@ -21,6 +21,7 @@ import {
 } from "tldraw";
 import "tldraw/tldraw.css";
 import { log } from "./log";
+import { packCards } from "./layout";
 import type { Layer, LayerGroup } from "./types";
 
 export type LayoutItem = { id: string; x: number; y: number; w: number; h: number };
@@ -812,6 +813,37 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
     }
   };
 
+  /** Multi-column pack (layout.ts) — compact board instead of one long column. */
+  const layoutByColumns = () => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    const free = layersRef.current
+      .filter((l) => !l.groupId)
+      .sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
+    const measured = free.map((layer) => {
+      const s = editor.getShape(imgId(layer.id)) as TLImageShape | undefined;
+      return {
+        id: layer.id,
+        w: s?.props.w ?? layer.w ?? 280,
+        h: s?.props.h ?? layer.h ?? 373,
+      };
+    });
+    const placed = packCards(measured, { gap: CARD_GAP });
+    const items: LayoutItem[] = [];
+    for (const p of placed) {
+      const s = editor.getShape(imgId(p.id)) as TLImageShape | undefined;
+      const size = measured.find((m) => m.id === p.id)!;
+      if (s) {
+        editor.updateShape<TLImageShape>({ id: s.id, type: "image", x: p.x, y: p.y });
+      }
+      items.push({ id: p.id, x: p.x, y: p.y, w: size.w, h: size.h });
+    }
+    if (items.length) {
+      lastSavedRef.current = JSON.stringify({ l: items, g: [] });
+      onSaveLayout?.(items, []);
+    }
+  };
+
   const align = (mode: "left" | "centerX" | "right" | "top" | "middleY" | "bottom") => {
     const editor = editorRef.current;
     if (!editor) return;
@@ -1133,6 +1165,9 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
                 </button>
                 <button type="button" title="按序排布" onClick={layoutByOrder}>
                   ≡↓
+                </button>
+                <button type="button" title="多列排布" onClick={layoutByColumns}>
+                  ▦
                 </button>
               </div>
               <div className="tool-group" data-group="align">

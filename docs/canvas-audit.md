@@ -461,10 +461,11 @@ app 级 undo/redo 事务化 · 单选/多选浮动工具条与尺寸读数 · �
 
 ### 10.3 未完成
 
-1. **P1-A（当前）**：子集/组级 compose，组卡独立预览 — 见 §5
-2. **F5 端到端**：「连续拆两张不同原图」自动用例未写（`?v=rev` 已实现）
-3. **mock 拆层保真度**：合成≠原图是 mock 设计，真模型前勿当 bug 修
-4. **其余 P1**：§5 backlog（图层面板、undo、吸附、视口、minimap…）
+1. ~~P1-A 组级 compose~~ → **已完成**（`compose --ids/--group`，组卡 `previewUrl`）
+2. ~~F5 端到端~~ → **已完成**（`.p0-f5-decompose-check.py`：换图连拆 rev/URL/比例）
+3. **P1-B 多列装箱** → **已完成**（`layout.ts:packCards`，工具条「多列排布」）
+4. **mock 拆层保真度**：合成≠原图是 mock 设计，真模型前勿当 bug 修
+5. **其余 P1**：§5 backlog（图层面板、undo、吸附、视口、minimap…）
 
 ### 10.4 后端路由速查
 
