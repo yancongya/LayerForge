@@ -3,26 +3,10 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
+  useMemo,
   useRef,
   useState,
 } from "react";
-import {
-  AssetRecordType,
-  TLImageShape,
-  TLShapeId,
-  TLUiActionsContextType,
-  TLUiOverrides,
-  TLUiToolsContextType,
-  DefaultMinimap,
-  Tldraw,
-  createShapeId,
-  toRichText,
-  type Editor,
-  type TLArrowShape,
-  type TLTextShape,
-} from "tldraw";
-import "tldraw/tldraw.css";
-import { log } from "./log";
 import { packCards } from "./layout";
 import type { Layer, LayerGroup } from "./types";
 
@@ -49,135 +33,46 @@ type Props = {
   onRename?: (layerId: string, name: string) => void;
   onRenameGroup?: (groupId: string, name: string) => void;
   onDeleteLayer?: (layerId: string) => void;
-  onSetFlags?: (layerId: string, flags: { visible?: boolean; locked?: boolean; opacity?: number }) => void;
+  onSetFlags?: (
+    layerId: string,
+    flags: { visible?: boolean; locked?: boolean; opacity?: number },
+  ) => void;
   onSaveLayout?: (layers: LayoutItem[], groups: LayoutItem[]) => void;
   onZoom?: (z: number) => void;
   showMinimap?: boolean;
 };
 
-/** Actions that must stay (selection / viewport / read-only export). Everything else is dropped. */
-const KEEP_ACTIONS = new Set([
-  "select-all",
-  "select-none",
-  "zoom-in",
-  "zoom-out",
-  "zoom-to-fit",
-  "zoom-to-100",
-  "zoom-to-selection",
-  "toggle-grid",
-  "toggle-snap-mode",
-  "toggle-invert-zoom",
-  "toggle-wrap-mode",
-  "toggle-edge-scrolling",
-  "toggle-focus-mode",
-  "toggle-dark-mode",
-  "toggle-reduce-motion",
-  "toggle-dynamic-size-mode",
-  "back-to-content",
-  "change-page-next",
-  "change-page-prev",
-  "copy-as-png",
-  "copy-as-svg",
-  "copy-as-json",
-  "export-as-png",
-  "export-as-svg",
-  "download-original",
-  "print",
-]);
-
-const uiOverrides: TLUiOverrides = {
-  tools(_editor: Editor, tools: TLUiToolsContextType) {
-    const keep = new Set(["select", "hand", "zoom"]);
-    for (const key of Object.keys(tools)) {
-      if (!keep.has(key)) delete tools[key as keyof TLUiToolsContextType];
-    }
-    return tools;
-  },
-  actions(_editor: Editor, actions: TLUiActionsContextType) {
-    for (const key of Object.keys(actions)) {
-      const ok = KEEP_ACTIONS.has(key) || key.startsWith("a11y-");
-      if (!ok) delete actions[key];
-    }
-    return actions;
-  },
+type Card = {
+  key: string;
+  name: string;
+  url: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  orderN?: number;
+  dim?: boolean;
+  locked?: boolean;
+  kind: "source" | "layer" | "group";
 };
 
 const NODE_W = 280;
-const DEFAULT_NODE_H = 373;
-const CARD_GAP = 80;
-
-function metaOf(shape: { meta?: unknown }): { role?: string; layerId?: string; name?: string } {
-  return (shape.meta as { role?: string; layerId?: string; name?: string }) ?? {};
-}
-function imgId(id: string): TLShapeId {
-  return createShapeId(`lf-${id}`);
-}
-function arrowId(id: string): TLShapeId {
-  return createShapeId(`lf-a-${id}`);
-}
-function labelId(id: string): TLShapeId {
-  return createShapeId(`lf-n-${id}`);
-}
-function badgeId(id: string): TLShapeId {
-  return createShapeId(`lf-b-${id}`);
-}
+const DEFAULT_H = 373;
+const GAP = 80;
 
 function cardBox(w?: number, h?: number, imgW?: number, imgH?: number) {
   if (w && h && w > 0 && h > 0) return { w, h };
   if (imgW && imgH && imgW > 0 && imgH > 0) {
     return { w: NODE_W, h: Math.max(1, (NODE_W * imgH) / imgW) };
   }
-  return { w: NODE_W, h: DEFAULT_NODE_H };
+  return { w: NODE_W, h: DEFAULT_H };
 }
 
 function isPlaced(x?: number, y?: number, imgW?: number) {
-  // Matches Layer.placed in layers.py: x=0,y=0 is valid once imgW is known.
   return !((x ?? 0) === 0 && (y ?? 0) === 0 && (imgW ?? 0) === 0);
 }
 
-function ensureAsset(
-  editor: Editor,
-  key: string,
-  url: string,
-  name: string,
-  w: number,
-  h: number,
-) {
-  const assetId = AssetRecordType.createId(key);
-  const prev = editor.getAsset(assetId);
-  const props = {
-    src: url,
-    w: w > 0 ? w : 720,
-    h: h > 0 ? h : 960,
-    name,
-    mimeType: "image/png",
-    isAnimated: false,
-  };
-  if (!prev) {
-    editor.createAssets([
-      {
-        id: assetId,
-        type: "image",
-        typeName: "asset",
-        props,
-        meta: { layerId: key },
-      },
-    ]);
-  } else {
-    const prevProps = prev.props as { src?: string | null; name?: string };
-    if (prevProps.src !== url || prevProps.name !== name) {
-      editor.updateAssets([
-        { id: assetId, type: "image", typeName: "asset", props },
-      ]);
-    }
-  }
-  return assetId;
-}
-
-type Hub = { key: string; x: number; y: number; groupId: string };
-type NameLabel = { key: string; name: string; x: number; y: number; w: number; dim?: boolean };
-type OrderBadge = { key: string; n: number; x: number; y: number; dim?: boolean };
-type Envelope = { x: number; y: number; w: number; h: number } | null;
+type Viewport = { x: number; y: number; z: number };
 
 const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
   {
@@ -200,1086 +95,685 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
   },
   ref,
 ) {
-  const editorRef = useRef<Editor | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
-  const layersRef = useRef(layers);
-  const groupsRef = useRef(groups);
-  const sourceRef = useRef(sourceUrl);
-  const compositeRef = useRef(compositeUrl);
-  const didFitRef = useRef(false);
-  const syncingRef = useRef(false);
-  const layoutTimerRef = useRef<number | null>(null);
-  const cameraTimerRef = useRef<number | null>(null);
-  const [selLayers, setSelLayers] = useState<string[]>([]);
-  const [selGroup, setSelGroup] = useState<string | null>(null);
-  const [hubs, setHubs] = useState<Hub[]>([]);
-  const [names, setNames] = useState<NameLabel[]>([]);
-  const [badges, setBadges] = useState<OrderBadge[]>([]);
-  const [envelope, setEnvelope] = useState<Envelope>(null);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const setEditingIdRef = useRef(setEditingId);
-  setEditingIdRef.current = setEditingId;
-  const [toolPos, setToolPos] = useState<{ x: number; y: number } | null>(null);
-  /** When set, canvas shows this group's members (smart-object style). Esc exits. */
+  const [viewport, setViewport] = useState<Viewport>({ x: 40, y: 40, z: 1 });
+  const [selected, setSelected] = useState<string[]>([]);
   const [enteredGroupId, setEnteredGroupId] = useState<string | null>(null);
-  const setEnteredGroupRef = useRef(setEnteredGroupId);
-  setEnteredGroupRef.current = setEnteredGroupId;
-  const enteredGroupRef = useRef<string | null>(null);
-  enteredGroupRef.current = enteredGroupId;
-  const selGroupRef = useRef<string | null>(null);
-  selGroupRef.current = selGroup;
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [toolPos, setToolPos] = useState<{ x: number; y: number } | null>(null);
+  const [minimap] = useState(showMinimap);
 
-  layersRef.current = layers;
-  groupsRef.current = groups;
-  sourceRef.current = sourceUrl;
-  compositeRef.current = compositeUrl;
+  const selectedRef = useRef(selected);
+  selectedRef.current = selected;
+  const viewportRef = useRef(viewport);
+  viewportRef.current = viewport;
+  const enteredRef = useRef(enteredGroupId);
+  enteredRef.current = enteredGroupId;
 
-  const srcPosKey = `lf:srcpos:${projectId}`;
-  const readSrcPos = (): { x: number; y: number } | null => {
-    try {
-      const raw = localStorage.getItem(srcPosKey);
-      if (!raw) return null;
-      const p = JSON.parse(raw) as { x?: number; y?: number };
-      if (typeof p.x !== "number" || typeof p.y !== "number") return null;
-      return { x: p.x, y: p.y };
-    } catch {
-      return null;
-    }
-  };
-  const writeSrcPos = (x: number, y: number) => {
-    try {
-      localStorage.setItem(srcPosKey, JSON.stringify({ x, y }));
-    } catch {
-      /* private mode */
-    }
-  };
+  const layoutTimer = useRef<number | null>(null);
+  const lastSaved = useRef("");
+  const wroteBack = useRef<Set<string>>(new Set());
+  const dragRef = useRef<{
+    key: string;
+    startX: number;
+    startY: number;
+    origX: number;
+    origY: number;
+    moved: boolean;
+  } | null>(null);
+  const panRef = useRef<{ x: number; y: number; vx: number; vy: number } | null>(null);
+  const spaceRef = useRef(false);
+  const [cardPos, setCardPos] = useState<Record<string, { x: number; y: number }>>({});
 
-  useImperativeHandle(ref, () => ({
-    fit: () => editorRef.current?.zoomToFit({ animation: { duration: 180 } }),
-    zoomIn: () => editorRef.current?.zoomIn(undefined, { animation: { duration: 120 } }),
-    zoomOut: () => editorRef.current?.zoomOut(undefined, { animation: { duration: 120 } }),
-    zoomTo100: () => {
-      const editor = editorRef.current;
-      if (!editor) return;
-      const cam = editor.getCamera();
-      editor.setCamera({ x: cam.x, y: cam.y, z: 1 }, { animation: { duration: 120 } });
-    },
-    selectLayer: (id: string) => {
-      const editor = editorRef.current;
-      const sid = imgId(id);
-      if (editor?.getShape(sid)) {
-        editor.select(sid);
-        editor.zoomToSelection({ animation: { duration: 180 } });
-      }
-    },
-  }));
+  const camKey = `lf:cam:${projectId}`;
+  const srcKey = `lf:srcpos:${projectId}`;
 
-  const cameraKey = `lf:cam:${projectId}`;
-
-  const persistCamera = useCallback(() => {
-    const editor = editorRef.current;
-    if (!editor) return;
-    try {
-      localStorage.setItem(cameraKey, JSON.stringify(editor.getCamera()));
-    } catch {
-      /* quota / private mode */
-    }
-  }, [cameraKey]);
-
-  const restoreCamera = useCallback(
-    (editor: Editor) => {
+  // ── build cards from layers.json (single source of truth) ──────────
+  const cards = useMemo(() => {
+    const ordered = [...layers].sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
+    const entered = enteredGroupId;
+    const out: Card[] = [];
+    const srcPos = (() => {
       try {
-        const raw = localStorage.getItem(cameraKey);
-        if (!raw) return false;
-        const cam = JSON.parse(raw) as { x?: number; y?: number; z?: number };
-        if (typeof cam.x !== "number" || typeof cam.y !== "number") return false;
-        editor.setCamera({ x: cam.x, y: cam.y, z: typeof cam.z === "number" ? cam.z : 1 });
-        return true;
+        const raw = localStorage.getItem(srcKey);
+        if (!raw) return null;
+        const p = JSON.parse(raw) as { x?: number; y?: number };
+        return typeof p.x === "number" && typeof p.y === "number" ? p : null;
       } catch {
-        return false;
+        return null;
       }
-    },
-    [cameraKey],
-  );
+    })();
 
-  /** Move locked chips via store.put — updateShape() ignores locked shapes. */
-  const moveLocked = useCallback(
-    (editor: Editor, id: TLShapeId, patch: Partial<{ x: number; y: number; props: unknown; meta: unknown }>) => {
-      const cur = editor.getShape(id);
-      if (!cur) return;
-      editor.store.put([{ ...cur, ...patch } as typeof cur]);
-    },
-    [],
-  );
+    if (sourceUrl) {
+      out.push({
+        key: "source",
+        name: "原图",
+        url: sourceUrl,
+        x: srcPos?.x ?? -420,
+        y: srcPos?.y ?? 40,
+        w: 280,
+        h: 373,
+        dim: Boolean(entered),
+        kind: "source",
+      });
+    }
 
-  /** Keep name/badge chips glued to their card (they are sibling shapes). */
-  const followCards = useCallback(
-    (editor: Editor) => {
-      const move = (key: string, includeBadge: boolean) => {
-        const card = editor.getShape(imgId(key)) as TLImageShape | undefined;
-        if (!card) return;
-        const lx = card.x;
-        const ly = card.y + card.props.h + 6;
-        const label = editor.getShape(labelId(key)) as TLTextShape | undefined;
-        if (label && (Math.abs(label.x - lx) > 0.5 || Math.abs(label.y - ly) > 0.5)) {
-          moveLocked(editor, label.id, { x: lx, y: ly });
-        }
-        if (includeBadge) {
-          const bx = card.x + 8;
-          const by = card.y + 8;
-          const badge = editor.getShape(badgeId(key)) as TLTextShape | undefined;
-          if (badge && (Math.abs(badge.x - bx) > 0.5 || Math.abs(badge.y - by) > 0.5)) {
-            moveLocked(editor, badge.id, { x: bx, y: by });
-          }
-        }
-      };
-      move("source", false);
-      for (const layer of layersRef.current) move(layer.id, true);
-      for (const g of groupsRef.current) move(`group:${g.id}`, false);
-    },
-    [moveLocked],
-  );
+    const free = ordered.filter((l) => !l.groupId);
+    const groupedVisible = entered
+      ? ordered.filter((l) => l.groupId === entered)
+      : [];
+    const showLayers = entered ? [...groupedVisible, ...free] : free;
+    const bright = new Set(groupedVisible.map((l) => l.id));
 
-  const refreshHubs = useCallback(() => {
-    const editor = editorRef.current;
-    if (!editor) return;
-    const collected: NameLabel[] = [];
-    const orderBadges: OrderBadge[] = [];
-    /** Screen-space chips glued to the card rect every frame. */
-    const pin = (key: string, name: string, orderN?: number, dim = false) => {
-      const el = rootRef.current?.querySelector(`[data-shape-id="${imgId(key)}"]`);
-      if (!el || !rootRef.current) return;
-      const wr = rootRef.current.getBoundingClientRect();
-      const r = el.getBoundingClientRect();
-      collected.push({
-        key,
-        name,
-        x: r.left - wr.left,
-        y: r.bottom - wr.top + 2,
-        w: r.width,
+    showLayers.forEach((layer, idx) => {
+      const box = cardBox(layer.w, layer.h, layer.imgW, layer.imgH);
+      const placed = isPlaced(layer.x, layer.y, layer.imgW);
+      const dim = entered ? !bright.has(layer.id) : false;
+      out.push({
+        key: layer.id,
+        name: layer.name,
+        url: layer.url,
+        x: placed ? (layer.x ?? 0) : idx * (NODE_W + GAP),
+        y: placed ? (layer.y ?? 0) : 0,
+        w: box.w,
+        h: box.h,
+        orderN: dim ? undefined : (entered ? [...bright].indexOf(layer.id) : free.indexOf(layer)) + 1 || undefined,
         dim,
+        locked: Boolean(layer.locked) || dim,
+        kind: "layer",
       });
-      if (orderN != null) {
-        orderBadges.push({
-          key,
-          n: orderN,
-          x: r.left - wr.left + 8,
-          y: r.top - wr.top + 8,
-          dim,
-        });
-      }
-    };
-    const entered = enteredGroupRef.current;
-    if (sourceRef.current) pin("source", "原图", undefined, Boolean(entered));
-    if (entered) {
-      layersRef.current
-        .filter((l) => l.groupId === entered)
-        .sort((a, b) => a.order - b.order || a.id.localeCompare(b.id))
-        .forEach((layer, i) => {
-          pin(layer.id, layer.name, i + 1, false);
-        });
-      layersRef.current
-        .filter((l) => !l.groupId)
-        .forEach((layer) => {
-          pin(layer.id, layer.name, undefined, true);
-        });
-      groupsRef.current
-        .filter((g) => g.id !== entered)
+    });
+
+    if (!entered) {
+      groups
+        .filter((g) => ordered.some((l) => l.groupId === g.id))
         .forEach((g) => {
-          pin(`group:${g.id}`, g.name, undefined, true);
+          const members = ordered.filter((l) => l.groupId === g.id);
+          const cover = members[0];
+          const box = cardBox(g.w, g.h, g.imgW || cover?.imgW, g.imgH || cover?.imgH);
+          const placed = isPlaced(g.x, g.y, g.imgW || cover?.imgW);
+          const preview = g.previewUrl ?? compositeUrl ?? cover?.url;
+          out.push({
+            key: `group:${g.id}`,
+            name: preview !== cover?.url ? `${g.name} · 合成预览` : g.name,
+            url: preview ?? cover?.url ?? "",
+            x: placed ? (g.x ?? 0) : 0,
+            y: placed ? (g.y ?? 0) : 0,
+            w: box.w,
+            h: box.h,
+            dim: false,
+            kind: "group",
+          });
         });
-    } else {
-      const freeSorted = layersRef.current
-        .filter((l) => !l.groupId)
-        .sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
-      freeSorted.forEach((layer, i) => {
-        pin(layer.id, layer.name, i + 1);
-      });
-      groupsRef.current
-        .slice()
-        .sort((a, b) => a.order - b.order || a.id.localeCompare(b.id))
-        .forEach((g, i) => {
-          const labeled =
-            g.previewUrl || compositeRef.current ? `${g.name} · 合成预览` : g.name;
-          pin(`group:${g.id}`, labeled, i + 1);
-        });
     }
+    return out;
+  }, [layers, groups, sourceUrl, compositeUrl, enteredGroupId, srcKey]);
 
-    const chips: Hub[] = [];
-    for (const g of groupsRef.current) {
-      const img = editor.getShape(imgId(`group:${g.id}`)) as TLImageShape | undefined;
-      if (!img) continue;
-      const p = editor.pageToScreen({ x: img.x - 16, y: img.y + img.props.h / 2 });
-      chips.push({ key: g.id, x: p.x, y: p.y, groupId: g.id });
-    }
-    setHubs(chips);
-    setNames(collected);
-    setBadges(orderBadges);
-    // Group envelope: dashed hull around members when a group is selected or open.
-    const gid = enteredGroupRef.current ?? selGroupRef.current;
-    if (gid && rootRef.current) {
-      const wr = rootRef.current.getBoundingClientRect();
-      let minX = Infinity;
-      let minY = Infinity;
-      let maxX = -Infinity;
-      let maxY = -Infinity;
-      let any = false;
-      for (const layer of layersRef.current) {
-        if (layer.groupId !== gid) continue;
-        const el = rootRef.current.querySelector(`[data-shape-id="${imgId(layer.id)}"]`);
-        if (!el) continue;
-        const r = el.getBoundingClientRect();
-        minX = Math.min(minX, r.left - wr.left);
-        minY = Math.min(minY, r.top - wr.top);
-        maxX = Math.max(maxX, r.right - wr.left);
-        maxY = Math.max(maxY, r.bottom - wr.top);
-        any = true;
-      }
-      if (!enteredGroupRef.current) {
-        const gel = rootRef.current.querySelector(`[data-shape-id="${imgId(`group:${gid}`)}"]`);
-        if (gel) {
-          const r = gel.getBoundingClientRect();
-          minX = Math.min(minX, r.left - wr.left);
-          minY = Math.min(minY, r.top - wr.top);
-          maxX = Math.max(maxX, r.right - wr.left);
-          maxY = Math.max(maxY, r.bottom - wr.top);
-          any = true;
-        }
-      }
-      setEnvelope(any ? { x: minX - 10, y: minY - 10, w: maxX - minX + 20, h: maxY - minY + 20 } : null);
-    } else {
-      setEnvelope(null);
-    }
-  }, []);
-
-  /** Last geometry we flushed to layers.json — skip no-op saves (breaks applyProject loops). */
-  const lastSavedRef = useRef<string>("");
-  const wroteBackRef = useRef<Set<string>>(new Set());
-
-  const scheduleLayoutSave = useCallback(() => {
+  // findPlacement write-back for unplaced layers
+  useEffect(() => {
     if (!onSaveLayout) return;
-    if (layoutTimerRef.current != null) window.clearTimeout(layoutTimerRef.current);
-    layoutTimerRef.current = window.setTimeout(() => {
-      layoutTimerRef.current = null;
-      const editor = editorRef.current;
-      if (!editor || syncingRef.current) return;
+    const items: LayoutItem[] = [];
+    let right = 0;
+    for (const c of cards) {
+      if (c.kind !== "layer" || c.dim) continue;
+      const layer = layers.find((l) => l.id === c.key);
+      if (!layer || isPlaced(layer.x, layer.y, layer.imgW)) {
+        right = Math.max(right, c.x + c.w);
+        continue;
+      }
+      const x = right > 0 ? right + GAP : 0;
+      const y = 0;
+      items.push({ id: c.key, x, y, w: c.w, h: c.h });
+      right = x + c.w;
+    }
+    if (items.length && !wroteBack.current.has(items[0].id)) {
+      wroteBack.current.add(items[0].id);
+      onSaveLayout(items, []);
+    }
+  }, [cards, layers, onSaveLayout]);
+
+  const scheduleSave = useCallback(() => {
+    if (!onSaveLayout) return;
+    if (layoutTimer.current != null) window.clearTimeout(layoutTimer.current);
+    layoutTimer.current = window.setTimeout(() => {
+      layoutTimer.current = null;
       const layerItems: LayoutItem[] = [];
       const groupItems: LayoutItem[] = [];
-      const entered = enteredGroupRef.current;
-      for (const layer of layersRef.current) {
-        // Outside isolation skip grouped members; inside isolation save only those.
-        if (entered ? layer.groupId !== entered : layer.groupId) continue;
-        const s = editor.getShape(imgId(layer.id)) as TLImageShape | undefined;
-        if (!s) continue;
-        layerItems.push({
-          id: layer.id,
-          x: s.x,
-          y: s.y,
-          w: s.props.w,
-          h: s.props.h,
-        });
+      for (const c of viewCardsRef.current) {
+        const item = { id: c.key.replace(/^group:/, ""), x: c.x, y: c.y, w: c.w, h: c.h };
+        if (c.kind === "group") groupItems.push(item);
+        else if (c.kind === "layer" && !c.dim) layerItems.push(item);
       }
-      for (const g of groupsRef.current) {
-        const s = editor.getShape(imgId(`group:${g.id}`)) as TLImageShape | undefined;
-        if (!s) continue;
-        groupItems.push({ id: g.id, x: s.x, y: s.y, w: s.props.w, h: s.props.h });
-      }
-      const sSrc = editor.getShape(imgId("source")) as TLImageShape | undefined;
-      if (sSrc) writeSrcPos(sSrc.x, sSrc.y);
-      if (!layerItems.length && !groupItems.length) return;
       const key = JSON.stringify({ l: layerItems, g: groupItems });
-      if (key === lastSavedRef.current) return;
-      lastSavedRef.current = key;
-      log.debug("tldraw", "save layout", { layers: layerItems.length, groups: groupItems.length });
+      if (key === lastSaved.current) return;
+      lastSaved.current = key;
       onSaveLayout(layerItems, groupItems);
     }, 250);
   }, [onSaveLayout]);
 
-  /**
-   * Whitelist shape reconciliation: only managed cards / arrows survive.
-   * Managed = source | free layer | group card | link arrow.
-   * Everything else (paste / duplicate / drop orphans) is deleted, along with
-   * assets no surviving shape references.
-   */
-  const syncGraph = useCallback(
-    (editor: Editor) => {
-      syncingRef.current = true;
-      try {
-        const ordered = [...layersRef.current].sort(
-          (a, b) => a.order - b.order || a.id.localeCompare(b.id),
-        );
-        const src = sourceRef.current;
-        const composite = compositeRef.current;
-        const entered = enteredGroupRef.current;
+  const cardsRef = useRef(cards);
+  cardsRef.current = cards;
 
-        // Isolation keeps the whole board visible; non-members are dimmed + locked.
-        const members = entered ? ordered.filter((l) => l.groupId === entered) : [];
-        const freeLayers = ordered.filter((l) => !l.groupId);
-        const shownGroups = groupsRef.current.filter((g) =>
-          ordered.some((l) => l.groupId === g.id),
-        );
-        // bright = operable; dim = grayed out and locked
-        const brightKeys = new Set<string>(members.map((l) => l.id));
-        const cards: Array<{ layer?: Layer; group?: LayerGroup; dim: boolean }> = [];
-        if (!entered) {
-          for (const l of freeLayers) cards.push({ layer: l, dim: false });
-          for (const g of shownGroups) cards.push({ group: g, dim: false });
-        } else {
-          for (const l of members) cards.push({ layer: l, dim: false });
-          for (const l of freeLayers) cards.push({ layer: l, dim: true });
-          for (const g of shownGroups) {
-            if (g.id === entered) continue; // wrapper card hidden while inside
-            cards.push({ group: g, dim: true });
-          }
-        }
-
-        const wantedShapes = new Set<TLShapeId>();
-        const wantedKeys: string[] = [];
-        const track = (key: string) => {
-          wantedKeys.push(key);
-          wantedShapes.add(imgId(key));
-        };
-        if (src) track("source");
-        const targets: string[] = [];
-        for (const c of cards) {
-          const key = c.layer ? c.layer.id : `group:${c.group!.id}`;
-          track(key);
-          targets.push(key);
-        }
-        if (src) {
-          for (const t of targets) {
-            wantedShapes.add(arrowId(t));
-          }
-        }
-
-        // Whitelist: drop every unmanaged shape (orphans, native groups, paste, drop).
-        // deleteShapes silently skips isLocked shapes — our arrows are locked — so unlock first.
-        const orphans = editor
-          .getCurrentPageShapes()
-          .filter((shape) => !wantedShapes.has(shape.id));
-        if (orphans.length) {
-          editor.run(() => {
-            for (const s of orphans) {
-              if (s.isLocked) {
-                editor.updateShape({ id: s.id, type: s.type, isLocked: false });
-              }
-            }
-            editor.deleteShapes(orphans.map((s) => s.id));
-          });
-        }
-
-        const eSrc = editor.getShape(imgId("source")) as TLImageShape | undefined;
-        const upsert = (
-          key: string,
-          role: "source" | "layer",
-          url: string,
-          name: string,
-          box: { w: number; h: number },
-          natural: { w: number; h: number },
-          fallback: { x: number; y: number },
-          locked: boolean,
-          opacity: number,
-        ) => {
-          const id = imgId(key);
-          const assetId = ensureAsset(editor, id, url, name, natural.w, natural.h);
-          const prev = editor.getShape(id) as TLImageShape | undefined;
-          if (!prev) {
-            editor.createShape<TLImageShape>({
-              id,
-              type: "image",
-              x: fallback.x,
-              y: fallback.y,
-              isLocked: locked,
-              opacity,
-              props: { w: box.w, h: box.h, assetId },
-              meta: { role, layerId: key, name },
-            });
-          } else {
-            const prevMeta = metaOf(prev);
-            const needMeta = prevMeta.name !== name || prevMeta.role !== role;
-            const needOpacity = (prev.opacity ?? 1) !== opacity;
-            const needLock = Boolean(prev.isLocked) !== locked;
-            const needAsset = (prev.props as TLImageShape["props"]).assetId !== assetId;
-            if (needMeta || needOpacity || needLock || needAsset) {
-              editor.updateShape<TLImageShape>({
-                id,
-                type: "image",
-                isLocked: locked,
-                opacity,
-                props: {
-                  assetId,
-                  w: prev.props.w || box.w,
-                  h: prev.props.h || box.h,
-                },
-                meta: { role, layerId: key, name },
-              });
-            }
-          }
-        };
-
-        // Source card: draggable; position kept in localStorage (not layers.json).
-        // Inside isolation it is dimmed + locked like any other non-member.
-        if (src) {
-          const savedSrc = readSrcPos();
-          upsert(
-            "source",
-            "source",
-            src,
-            "原图",
-            cardBox(280, 373, 720, 960),
-            { w: 720, h: 960 },
-            { x: eSrc?.x ?? savedSrc?.x ?? -520, y: eSrc?.y ?? savedSrc?.y ?? 40 },
-            Boolean(entered),
-            entered ? 0.22 : 1,
-          );
-          const sShape = editor.getShape(imgId("source")) as TLImageShape | undefined;
-          void sShape;
-        }
-
-        // Rightmost edge of cards we know about, for findPlacement of unplaced items.
-        let rightEdge = 0;
-        const noteBox = (x: number, w: number) => {
-          rightEdge = Math.max(rightEdge, x + w);
-        };
-
-        cards.forEach((c) => {
-          if (c.layer) {
-            const layer = c.layer;
-            const box = cardBox(layer.w, layer.h, layer.imgW, layer.imgH);
-            const placed = isPlaced(layer.x, layer.y, layer.imgW);
-            const x = placed ? (layer.x ?? 0) : rightEdge > 0 ? rightEdge + CARD_GAP : 0;
-            const y = placed ? (layer.y ?? 0) : 0;
-            if (!placed && !wroteBackRef.current.has(layer.id)) {
-              wroteBackRef.current.add(layer.id);
-              const patch = { id: layer.id, x, y, w: box.w, h: box.h };
-              queueMicrotask(() => {
-                lastSavedRef.current = JSON.stringify({
-                  l: [patch],
-                  g: [],
-                });
-                onSaveLayout?.([patch], []);
-              });
-            }
-            noteBox(x, box.w);
-            const dim = c.dim;
-            const baseOp =
-              (layer.visible === false ? 0.35 : 1) * Math.max(0, Math.min(1, layer.opacity ?? 1));
-            const vis = dim ? 0.22 : baseOp;
-            upsert(
-              layer.id,
-              "layer",
-              layer.url,
-              layer.name,
-              box,
-              { w: layer.imgW || 720, h: layer.imgH || 960 },
-              { x, y },
-              dim || Boolean(layer.locked),
-              vis,
-            );
-            return;
-          }
-          const g = c.group!;
-          const gMembers = ordered.filter((l) => l.groupId === g.id);
-          if (!gMembers.length) return;
-          // Cover = this group's compose (P1-A); else full composite; else bottom member.
-          const cover = gMembers[0];
-          const previewSrc = g.previewUrl ?? composite ?? cover.url;
-          const box = cardBox(g.w, g.h, g.imgW || cover.imgW, g.imgH || cover.imgH);
-          const placed = isPlaced(g.x, g.y, g.imgW || cover.imgW);
-          const x = placed ? (g.x ?? 0) : rightEdge > 0 ? rightEdge + CARD_GAP : 0;
-          const y = placed ? (g.y ?? 0) : 0;
-          if (!placed && !wroteBackRef.current.has(`group:${g.id}`)) {
-            wroteBackRef.current.add(`group:${g.id}`);
-            const patch = { id: g.id, x, y, w: box.w, h: box.h };
-            queueMicrotask(() => {
-              lastSavedRef.current = JSON.stringify({ l: [], g: [patch] });
-              onSaveLayout?.([], [patch]);
-            });
-          }
-          noteBox(x, box.w);
-          const gOp = c.dim ? 0.18 : 1;
-          const gName = previewSrc !== cover.url ? `${g.name} · 合成预览` : g.name;
-          upsert(
-            `group:${g.id}`,
-            "layer",
-            previewSrc,
-            gName,
-            box,
-            { w: g.imgW || cover.imgW || 720, h: g.imgH || cover.imgH || 960 },
-            { x, y },
-            c.dim,
-            gOp,
-          );
-          const gShape = editor.getShape(imgId(`group:${g.id}`)) as TLImageShape | undefined;
-          void gShape;
-        });
-
-        // Isolation styling pass: force dim + lock on every non-member shape.
-        // Arrows use the target key as layerId, so the same brightKeys check works.
-        if (entered) {
-          editor.run(() => {
-            for (const shape of editor.getCurrentPageShapes()) {
-              const key = metaOf(shape).layerId ?? "";
-              const dim = !brightKeys.has(key);
-              const wantOpacity = dim ? 0.18 : 1;
-              const wantLock = dim ? true : shape.type === "arrow";
-              const curOp = shape.opacity ?? 1;
-              if (Math.abs(curOp - wantOpacity) > 0.01 || Boolean(shape.isLocked) !== wantLock) {
-                editor.updateShape({
-                  id: shape.id,
-                  type: shape.type,
-                  isLocked: wantLock,
-                  opacity: wantOpacity,
-                } as never);
-              }
-            }
-          });
-        }
-
-        // Arrows: source → free layers + group cards.
-        if (src) {
-          for (const t of targets) {
-            const sImg = editor.getShape(imgId("source")) as TLImageShape | undefined;
-            const tImg = editor.getShape(imgId(t)) as TLImageShape | undefined;
-            if (!sImg || !tImg) continue;
-            const aId = arrowId(t);
-            const sx = sImg.x + sImg.props.w;
-            const sy = sImg.y + sImg.props.h / 2;
-            const ex = tImg.x;
-            const ey = tImg.y + tImg.props.h / 2;
-            const arrowOpacity = !entered || brightKeys.has(t) ? 1 : 0.18;
-            if (!editor.getShape(aId)) {
-              editor.createShape<TLArrowShape>({
-                id: aId,
-                type: "arrow",
-                x: sx,
-                y: sy,
-                isLocked: true,
-                opacity: arrowOpacity,
-                props: {
-                  kind: "arc",
-                  color: "black",
-                  dash: "solid",
-                  size: "s",
-                  arrowheadStart: "none",
-                  arrowheadEnd: "arrow",
-                  start: { x: 0, y: 0 },
-                  end: { x: ex - sx, y: ey - sy },
-                  richText: toRichText(""),
-                  bend: 0.5,
-                },
-                meta: { role: "link", layerId: t },
-              });
-            } else {
-              editor.updateShape<TLArrowShape>({
-                id: aId,
-                type: "arrow",
-                isLocked: true,
-                opacity: arrowOpacity,
-                props: {
-                  ...editor.getShape(aId)!.props,
-                  end: { x: ex - sx, y: ey - sy },
-                },
-                meta: { role: "link", layerId: t },
-              });
-            }
-            for (const b of editor.getBindingsFromShape(aId, "arrow")) {
-              editor.deleteBindings([b.id]);
-            }
-            editor.createBinding({
-              type: "arrow",
-              fromId: aId,
-              toId: imgId("source"),
-              props: {
-                terminal: "start",
-                normalizedAnchor: { x: 1, y: 0.5 },
-                isExact: true,
-                isPrecise: true,
-                snap: "none",
-              },
-            });
-            editor.createBinding({
-              type: "arrow",
-              fromId: aId,
-              toId: imgId(t),
-              props: {
-                terminal: "end",
-                normalizedAnchor: { x: 0, y: 0.5 },
-                isExact: true,
-                isPrecise: true,
-                snap: "none",
-              },
-            });
-          }
-        }
-
-        // Drop assets nothing references any more.
-        const usedAssets = new Set(
-          editor
-            .getCurrentPageShapes()
-            .map((s) => (s as TLImageShape).props?.assetId)
-            .filter(Boolean),
-        );
-        for (const asset of editor.getAssets()) {
-          if (!usedAssets.has(asset.id)) editor.deleteAssets([asset.id]);
-        }
-
-        followCards(editor);
-        window.setTimeout(() => refreshHubs(), 20);
-        if (!didFitRef.current && (src || targets.length)) {
-          const restored = restoreCamera(editor);
-          didFitRef.current = true;
-          if (!restored) editor.zoomToFit({ animation: { duration: 0 } });
-        }
-      } finally {
-        syncingRef.current = false;
-      }
-    },
-    [onSaveLayout, refreshHubs, restoreCamera],
+  /** Local drag offsets; cleared when layers.json props catch up. */
+  const viewCards = useMemo(
+    () =>
+      cards.map((c) => {
+        const p = cardPos[c.key];
+        return p ? { ...c, x: p.x, y: p.y } : c;
+      }),
+    [cards, cardPos],
   );
-
-  const refreshSelection = useCallback((editor: Editor) => {
-    const ids: string[] = [];
-    let gid: string | null = null;
-    for (const sid of editor.getSelectedShapeIds()) {
-      const meta = metaOf(editor.getShape(sid) ?? {});
-      const key = meta.layerId;
-      if (!key) continue;
-      if (String(key).startsWith("group:")) {
-        gid = String(key).slice(6);
-        continue;
-      }
-      if (key === "source" || key === "composite") continue;
-      if (!ids.includes(key)) ids.push(key);
-      const layer = layersRef.current.find((l) => l.id === key);
-      if (layer?.groupId) gid = layer.groupId;
-    }
-    setSelLayers(ids);
-    setSelGroup(gid);
-    const shapes = ids.map((id) => editor.getShape(imgId(id))).filter(Boolean) as TLImageShape[];
-    const groupCard = gid ? (editor.getShape(imgId(`group:${gid}`)) as TLImageShape | undefined) : null;
-    const all = groupCard ? [...shapes, groupCard] : shapes;
-    if (all.length) {
-      const minX = Math.min(...all.map((s) => s.x));
-      const maxX = Math.max(...all.map((s) => s.x + s.props.w));
-      const minY = Math.min(...all.map((s) => s.y));
-      // Horizontal toolbar centered above the selection.
-      const p = editor.pageToScreen({ x: (minX + maxX) / 2, y: minY - 12 });
-      setToolPos({ x: p.x, y: p.y });
-    } else {
-      setToolPos(null);
-    }
-    log.debug("tldraw", "selection", { ids, gid });
-  }, []);
-
-  const stackNow = (ids: string[]) => {
-    const editor = editorRef.current;
-    if (!editor) return;
-    const imgs = ids.map((id) => editor.getShape(imgId(id))).filter(Boolean) as TLImageShape[];
-    if (imgs.length < 2) return;
-    const x0 = Math.min(...imgs.map((s) => s.x));
-    const y0 = Math.min(...imgs.map((s) => s.y));
-    imgs.forEach((s, i) => {
-      editor.updateShape<TLImageShape>({
-        id: s.id,
-        type: "image",
-        x: x0 + i * 16,
-        y: y0 + i * 16,
-      });
-    });
-    scheduleLayoutSave();
-  };
-
-  /** Snap free-layer cards into one column ordered by `order` (top → bottom). */
-  const layoutByOrder = () => {
-    const editor = editorRef.current;
-    if (!editor) return;
-    const free = layersRef.current
-      .filter((l) => !l.groupId)
-      .sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
-    let y = 0;
-    const items: LayoutItem[] = [];
-    for (const layer of free) {
-      const s = editor.getShape(imgId(layer.id)) as TLImageShape | undefined;
-      const w = s?.props.w ?? layer.w ?? 280;
-      const h = s?.props.h ?? layer.h ?? 373;
-      if (s) {
-        editor.updateShape<TLImageShape>({ id: s.id, type: "image", x: 0, y });
-      }
-      items.push({ id: layer.id, x: 0, y, w, h });
-      y += h + CARD_GAP;
-    }
-    if (items.length) {
-      lastSavedRef.current = JSON.stringify({ l: items, g: [] });
-      onSaveLayout?.(items, []);
-    }
-  };
-
-  /** Multi-column pack (layout.ts) — compact board instead of one long column. */
-  const layoutByColumns = () => {
-    const editor = editorRef.current;
-    if (!editor) return;
-    const free = layersRef.current
-      .filter((l) => !l.groupId)
-      .sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
-    const measured = free.map((layer) => {
-      const s = editor.getShape(imgId(layer.id)) as TLImageShape | undefined;
-      return {
-        id: layer.id,
-        w: s?.props.w ?? layer.w ?? 280,
-        h: s?.props.h ?? layer.h ?? 373,
-      };
-    });
-    const placed = packCards(measured, { gap: CARD_GAP });
-    const items: LayoutItem[] = [];
-    for (const p of placed) {
-      const s = editor.getShape(imgId(p.id)) as TLImageShape | undefined;
-      const size = measured.find((m) => m.id === p.id)!;
-      if (s) {
-        editor.updateShape<TLImageShape>({ id: s.id, type: "image", x: p.x, y: p.y });
-      }
-      items.push({ id: p.id, x: p.x, y: p.y, w: size.w, h: size.h });
-    }
-    if (items.length) {
-      lastSavedRef.current = JSON.stringify({ l: items, g: [] });
-      onSaveLayout?.(items, []);
-    }
-  };
-
-  const align = (mode: "left" | "centerX" | "right" | "top" | "middleY" | "bottom") => {
-    const editor = editorRef.current;
-    if (!editor) return;
-    const shapes = selLayers
-      .map((id) => editor.getShape(imgId(id)))
-      .filter(Boolean) as TLImageShape[];
-    if (shapes.length < 2) return;
-    const minX = Math.min(...shapes.map((s) => s.x));
-    const maxX = Math.max(...shapes.map((s) => s.x + s.props.w));
-    const minY = Math.min(...shapes.map((s) => s.y));
-    const maxY = Math.max(...shapes.map((s) => s.y + s.props.h));
-    for (const s of shapes) {
-      let x = s.x;
-      let y = s.y;
-      if (mode === "left") x = minX;
-      if (mode === "centerX") x = (minX + maxX) / 2 - s.props.w / 2;
-      if (mode === "right") x = maxX - s.props.w;
-      if (mode === "top") y = minY;
-      if (mode === "middleY") y = (minY + maxY) / 2 - s.props.h / 2;
-      if (mode === "bottom") y = maxY - s.props.h;
-      editor.updateShape<TLImageShape>({ id: s.id, type: "image", x, y });
-    }
-    scheduleLayoutSave();
-  };
+  const viewCardsRef = useRef(viewCards);
+  viewCardsRef.current = viewCards;
 
   useEffect(() => {
-    const editor = editorRef.current;
-    if (editor) syncGraph(editor);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [layers, groups, sourceUrl, compositeUrl, enteredGroupId]);
+    setCardPos({});
+  }, [layers, groups]);
+
+  const applyDrag = useCallback(
+    (keys: string[], primaryKey: string, nx: number, ny: number) => {
+      const primary = viewCardsRef.current.find((c) => c.key === primaryKey);
+      if (!primary) return;
+      const ddx = nx - primary.x;
+      const ddy = ny - primary.y;
+      setCardPos((prev) => {
+        const next = { ...prev };
+        for (const k of keys) {
+          const c = viewCardsRef.current.find((x) => x.key === k);
+          if (!c || c.locked) continue;
+          if (k === primaryKey) next[k] = { x: nx, y: ny };
+          else {
+            const base = prev[k] ?? { x: c.x, y: c.y };
+            next[k] = { x: base.x + ddx, y: base.y + ddy };
+          }
+        }
+        return next;
+      });
+    },
+    [],
+  );
+
+  // ── viewport ───────────────────────────────────────────────────────
+  const zoomAt = useCallback((cx: number, cy: number, zNext: number) => {
+    setViewport((v) => {
+      const z = Math.max(0.1, Math.min(4, zNext));
+      const ratio = z / v.z;
+      return {
+        z,
+        x: cx - (cx - v.x) * ratio,
+        y: cy - (cy - v.y) * ratio,
+      };
+    });
+  }, []);
+
+  const fit = useCallback(() => {
+    const el = rootRef.current;
+    if (!el) return;
+    const list = cardsRef.current;
+    if (!list.length) {
+      setViewport({ x: 40, y: 40, z: 1 });
+      return;
+    }
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const c of list) {
+      minX = Math.min(minX, c.x);
+      minY = Math.min(minY, c.y);
+      maxX = Math.max(maxX, c.x + c.w);
+      maxY = Math.max(maxY, c.y + c.h + 28);
+    }
+    const pad = 48;
+    const bw = maxX - minX + pad * 2;
+    const bh = maxY - minY + pad * 2;
+    const r = el.getBoundingClientRect();
+    const z = Math.max(0.1, Math.min(4, Math.min(r.width / bw, r.height / bh)));
+    setViewport({
+      z,
+      x: r.width / 2 - ((minX + maxX) / 2) * z,
+      y: r.height / 2 - ((minY + maxY) / 2) * z,
+    });
+  }, []);
+
+  useImperativeHandle(ref, () => ({
+    fit,
+    zoomIn: () => {
+      const el = rootRef.current;
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      zoomAt(r.width / 2, r.height / 2, viewportRef.current.z * 1.25);
+    },
+    zoomOut: () => {
+      const el = rootRef.current;
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      zoomAt(r.width / 2, r.height / 2, viewportRef.current.z / 1.25);
+    },
+    zoomTo100: () => {
+      const el = rootRef.current;
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      zoomAt(r.width / 2, r.height / 2, 1);
+    },
+    selectLayer: (id: string) => {
+      const key = id.startsWith("group:") ? id : id;
+      setSelected([key]);
+      const c = cardsRef.current.find((x) => x.key === key);
+      const el = rootRef.current;
+      if (!c || !el) return;
+      const r = el.getBoundingClientRect();
+      setViewport((v) => ({
+        ...v,
+        x: r.width / 2 - (c.x + c.w / 2) * v.z,
+        y: r.height / 2 - (c.y + c.h / 2) * v.z,
+      }));
+    },
+  }));
+
+  useEffect(() => {
+    onZoom?.(viewport.z);
+  }, [viewport.z, onZoom]);
+
+  // restore camera once
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(camKey);
+      if (raw) {
+        const cam = JSON.parse(raw) as Viewport;
+        if (typeof cam.x === "number" && typeof cam.y === "number" && typeof cam.z === "number") {
+          setViewport(cam);
+          return;
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+    const t = window.setTimeout(fit, 80);
+    return () => window.clearTimeout(t);
+  }, [camKey, fit]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(camKey, JSON.stringify(viewport));
+    } catch {
+      /* ignore */
+    }
+  }, [viewport, camKey]);
+
+  // ── world helpers ──────────────────────────────────────────────────
+  const toWorld = useCallback((clientX: number, clientY: number) => {
+    const el = rootRef.current;
+    if (!el) return { x: 0, y: 0 };
+    const r = el.getBoundingClientRect();
+    const v = viewportRef.current;
+    return {
+      x: (clientX - r.left - v.x) / v.z,
+      y: (clientY - r.top - v.y) / v.z,
+    };
+  }, []);
+
+  // ── pointer: card drag / pan / wheel zoom ──────────────────────────
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!el) return;
+
+    const onWheel = (e: WheelEvent) => {
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+        const r = el.getBoundingClientRect();
+        const cx = e.clientX - r.left;
+        const cy = e.clientY - r.top;
+        const next = viewportRef.current.z * (e.deltaY > 0 ? 0.9 : 1.1);
+        zoomAt(cx, cy, next);
+      }
+    };
+
+    const onPointerDown = (e: PointerEvent) => {
+      const target = e.target as HTMLElement;
+      if (target.closest(".sel-tools, .enter-chip, .name-edit, .zoom-tools, button")) {
+        return;
+      }
+      const cardEl = target.closest("[data-lf-card]") as HTMLElement | null;
+      const isPan = spaceRef.current || e.button === 1 || (!cardEl && e.button === 0);
+      if (isPan) {
+        panRef.current = {
+          x: e.clientX,
+          y: e.clientY,
+          vx: viewportRef.current.x,
+          vy: viewportRef.current.y,
+        };
+        el.setPointerCapture(e.pointerId);
+        return;
+      }
+      if (!cardEl || e.button !== 0) return;
+      const key = cardEl.dataset.lfCard!;
+      const card = cardsRef.current.find((c) => c.key === key);
+      if (!card) return;
+      if (e.shiftKey || e.metaKey || e.ctrlKey) {
+        setSelected((prev) =>
+          prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key],
+        );
+      } else {
+        setSelected((prev) => (prev.includes(key) ? prev : [key]));
+      }
+      if (card.locked) return;
+      // Don't capture until a real drag starts — keeps dblclick working.
+      const w = toWorld(e.clientX, e.clientY);
+      dragRef.current = {
+        key,
+        startX: w.x,
+        startY: w.y,
+        origX: card.x,
+        origY: card.y,
+        moved: false,
+      };
+      el.setPointerCapture(e.pointerId);
+    };
+
+    const onPointerMove = (e: PointerEvent) => {
+      if (panRef.current) {
+        const p = panRef.current;
+        setViewport((v) => ({
+          ...v,
+          x: p.vx + (e.clientX - p.x),
+          y: p.vy + (e.clientY - p.y),
+        }));
+        return;
+      }
+      const d = dragRef.current;
+      if (!d) return;
+      const w = toWorld(e.clientX, e.clientY);
+      const dx = w.x - d.startX;
+      const dy = w.y - d.startY;
+      if (!d.moved && Math.abs(dx) + Math.abs(dy) > 2) {
+        d.moved = true;
+        el.setPointerCapture(e.pointerId);
+      }
+      if (!d.moved) return;
+      const keys = selectedRef.current.includes(d.key) ? selectedRef.current : [d.key];
+      applyDrag(keys, d.key, d.origX + dx, d.origY + dy);
+    };
+
+    const onPointerUp = () => {
+      if (dragRef.current?.moved) scheduleSave();
+      dragRef.current = null;
+      panRef.current = null;
+    };
+
+    el.addEventListener("wheel", onWheel, { passive: false });
+    el.addEventListener("pointerdown", onPointerDown);
+    el.addEventListener("pointermove", onPointerMove);
+    el.addEventListener("pointerup", onPointerUp);
+    el.addEventListener("pointercancel", onPointerUp);
+
+    return () => {
+      el.removeEventListener("wheel", onWheel);
+      el.removeEventListener("pointerdown", onPointerDown);
+      el.removeEventListener("pointermove", onPointerMove);
+      el.removeEventListener("pointerup", onPointerUp);
+      el.removeEventListener("pointercancel", onPointerUp);
+    };
+  }, [toWorld, zoomAt, scheduleSave, applyDrag]);
+
+  // ── keyboard ───────────────────────────────────────────────────────
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA")) return;
+      if (e.code === "Space") {
+        spaceRef.current = true;
+        if (rootRef.current) rootRef.current.style.cursor = "grab";
+        e.preventDefault();
+        return;
+      }
+      if (e.key === "Escape") {
+        if (enteredRef.current) setEnteredGroupId(null);
+        else setSelected([]);
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && (e.key === "a" || e.key === "A")) {
+        e.preventDefault();
+        setSelected(cardsRef.current.filter((c) => c.kind === "layer" && !c.dim).map((c) => c.key));
+        return;
+      }
+      if (e.key.startsWith("Arrow")) {
+        const step = e.shiftKey ? 10 : 1;
+        const dx = e.key === "ArrowLeft" ? -step : e.key === "ArrowRight" ? step : 0;
+        const dy = e.key === "ArrowUp" ? -step : e.key === "ArrowDown" ? step : 0;
+        if (!selectedRef.current.length) return;
+        e.preventDefault();
+        setCardPos((prev) => {
+          const next = { ...prev };
+          for (const k of selectedRef.current) {
+            const c = viewCardsRef.current.find((x) => x.key === k);
+            if (!c || c.locked) continue;
+            const base = next[k] ?? { x: c.x, y: c.y };
+            next[k] = { x: base.x + dx, y: base.y + dy };
+          }
+          return next;
+        });
+        scheduleSave();
+      }
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.code === "Space") {
+        spaceRef.current = false;
+        if (rootRef.current) rootRef.current.style.cursor = "";
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("keyup", onKeyUp);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("keyup", onKeyUp);
+    };
+  }, [scheduleSave]);
+
+  // clear cardPos when layers prop catches up
+  useEffect(() => {
+    setCardPos({});
+  }, [layers, groups]);
+
+  // Reliable dblclick (pointer capture can swallow native dblclick in some hosts)
+  useEffect(() => {
+    const onDbl = (e: MouseEvent) => {
+      const el = (e.target as HTMLElement | null)?.closest?.("[data-lf-card]") as HTMLElement | null;
+      const key = el?.dataset.lfCard;
+      if (!key) return;
+      const t = e.target as HTMLElement;
+      const isName = t.closest(".lf-card-name");
+      if (isName && key !== "source") {
+        setEditingId(key);
+        return;
+      }
+      if (key.startsWith("group:")) setEnteredGroupId(key.slice(6));
+      else if (key !== "source") setEditingId(key);
+    };
+    window.addEventListener("dblclick", onDbl, true);
+    return () => window.removeEventListener("dblclick", onDbl, true);
+  }, []);
+
+  // ── selection tools ────────────────────────────────────────────────
+  const align = (mode: "left" | "centerX" | "right" | "top" | "middleY" | "bottom") => {
+    const list = viewCards.filter((c) => selected.includes(c.key) && !c.locked);
+    if (list.length < 2) return;
+    const minX = Math.min(...list.map((c) => c.x));
+    const maxX = Math.max(...list.map((c) => c.x + c.w));
+    const minY = Math.min(...list.map((c) => c.y));
+    const maxY = Math.max(...list.map((c) => c.y + c.h));
+    setCardPos((prev) => {
+      const next = { ...prev };
+      for (const c of list) {
+        let x = c.x;
+        let y = c.y;
+        if (mode === "left") x = minX;
+        if (mode === "centerX") x = (minX + maxX) / 2 - c.w / 2;
+        if (mode === "right") x = maxX - c.w;
+        if (mode === "top") y = minY;
+        if (mode === "middleY") y = (minY + maxY) / 2 - c.h / 2;
+        if (mode === "bottom") y = maxY - c.h;
+        next[c.key] = { x, y };
+      }
+      return next;
+    });
+    scheduleSave();
+  };
+
+  const layoutByOrder = () => {
+    const free = viewCards
+      .filter((c) => c.kind === "layer" && !c.dim)
+      .sort((a, b) => (a.orderN ?? 0) - (b.orderN ?? 0));
+    let y = 0;
+    setCardPos((prev) => {
+      const next = { ...prev };
+      for (const c of free) {
+        next[c.key] = { x: 0, y };
+        y += c.h + GAP;
+      }
+      return next;
+    });
+    scheduleSave();
+  };
+
+  const layoutByColumns = () => {
+    const free = viewCards
+      .filter((c) => c.kind === "layer" && !c.dim)
+      .sort((a, b) => (a.orderN ?? 0) - (b.orderN ?? 0));
+    const packed = packCards(free.map((c) => ({ id: c.key, w: c.w, h: c.h })), { gap: GAP });
+    setCardPos((prev) => {
+      const next = { ...prev };
+      for (const p of packed) next[p.id] = { x: p.x, y: p.y };
+      return next;
+    });
+    scheduleSave();
+  };
+
+  const stackNow = () => {
+    const list = viewCards.filter((c) => selected.includes(c.key) && c.kind === "layer");
+    if (list.length < 2) return;
+    const x0 = Math.min(...list.map((c) => c.x));
+    const y0 = Math.min(...list.map((c) => c.y));
+    setCardPos((prev) => {
+      const next = { ...prev };
+      list.forEach((c, i) => {
+        next[c.key] = { x: x0 + i * 16, y: y0 + i * 16 };
+      });
+      return next;
+    });
+    scheduleSave();
+  };
+
+  // double-click
+  const onDblCard = (key: string) => {
+    if (key.startsWith("group:")) {
+      setEnteredGroupId(key.slice(6));
+      return;
+    }
+    if (key !== "source") setEditingId(key);
+  };
+
+  // group selection → tools
+  const selLayerIds = selected.filter((k) => !k.startsWith("group:") && k !== "source");
+  const selGroup =
+    selected.find((k) => k.startsWith("group:"))?.slice(6) ??
+    (enteredGroupId || null);
+
+  // tool position above selection in screen space
+  useEffect(() => {
+    const list = viewCards.filter((c) => selected.includes(c.key));
+    const el = rootRef.current;
+    if (!list.length || !el) {
+      setToolPos(null);
+      return;
+    }
+    const minX = Math.min(...list.map((c) => c.x));
+    const maxX = Math.max(...list.map((c) => c.x + c.w));
+    const minY = Math.min(...list.map((c) => c.y));
+    const v = viewport;
+    setToolPos({
+      x: v.x + ((minX + maxX) / 2) * v.z,
+      y: v.y + minY * v.z - 10,
+    });
+  }, [selected, viewCards, viewport]);
+
+  // svg arrows: source → each non-source card
+  const sourceCard = viewCards.find((c) => c.key === "source");
+  const arrows = sourceCard
+    ? viewCards
+        .filter((c) => c.key !== "source")
+        .map((c) => ({
+          key: c.key,
+          x1: sourceCard.x + sourceCard.w,
+          y1: sourceCard.y + sourceCard.h / 2,
+          x2: c.x,
+          y2: c.y + c.h / 2,
+          dim: Boolean(c.dim),
+        }))
+    : [];
+
+  const commitName = (value: string) => {
+    const name = value.trim();
+    const id = editingId;
+    setEditingId(null);
+    if (!name || !id || id === "source") return;
+    if (id.startsWith("group:")) onRenameGroup?.(id.slice(6), name);
+    else onRename?.(id, name);
+  };
 
   return (
     <div className="canvas-stage" ref={rootRef}>
-      <Tldraw
-        colorScheme="light"
-        cameraOptions={{
-          zoomSteps: [0.1, 0.25, 0.5, 0.75, 1, 1.5, 2, 4],
+      <div
+        className="canvas-world"
+        style={{
+          transform: `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.z})`,
+          transformOrigin: "0 0",
         }}
-        options={{
-          snapThreshold: 8,
-        }}
-        overrides={uiOverrides}
-        components={{
-          Toolbar: () => null,
-          StylePanel: () => null,
-          PageMenu: () => null,
-          NavigationPanel: () => null,
-          HelpMenu: () => null,
-          ZoomMenu: () => null,
-          MainMenu: () => null,
-          // Collapse the native image/rich-text toolbars into our single sel-tools bar.
-          ImageToolbar: () => null,
-          VideoToolbar: () => null,
-          RichTextToolbar: () => null,
-          Minimap: showMinimap ? DefaultMinimap : () => null,
-          // Do NOT override ContextMenu with () => null: in tldraw 5.4.2 the default
-          // ContextMenu is what wraps <Canvas />. A null component hides the whole board.
-        }}
-        onMount={(editor) => {
-          editorRef.current = editor;
+      >
+        <svg className="canvas-links" aria-hidden>
+          {arrows.map((a) => (
+            <line
+              key={a.key}
+              x1={a.x1}
+              y1={a.y1}
+              x2={a.x2}
+              y2={a.y2}
+              stroke="rgba(24,24,27,0.75)"
+              strokeWidth={2 / viewport.z}
+              opacity={a.dim ? 0.2 : 0.85}
+              markerEnd="url(#lf-arrow)"
+            />
+          ))}
+          <defs>
+            <marker id="lf-arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+              <path d="M0,0 L6,3 L0,6 z" fill="rgba(24,24,27,0.75)" />
+            </marker>
+          </defs>
+        </svg>
 
-          // Reject external drops/pastes — whitelist sweep is the only writer.
-          const reject = () => {
-            /* swallow */
-          };
-          for (const kind of [
-            "files",
-            "url",
-            "text",
-            "svg-text",
-            "embed",
-            "excalidraw",
-            "file-replace",
-            "tldraw",
-          ] as const) {
-            editor.registerExternalContentHandler(kind, reject);
-          }
-
-          // Defer first paint-time sync: creating shapes inside onMount can race
-          // ShapesLayer's useValue subscription, leaving the store full and the DOM empty.
-          const boot = window.setTimeout(() => {
-            syncGraph(editor);
-            if (!restoreCamera(editor)) {
-              editor.zoomToFit({ animation: { duration: 0 } });
-            }
-          }, 0);
-
-          editor.store.listen(
-            () => {
-              if (syncingRef.current) return;
-              scheduleLayoutSave();
-            },
-            { source: "user", scope: "document" },
-          );
-
-          // Pointer-up is the reliable drag-end signal (store debounce alone missed some drags).
-          const onPointerUp = () => {
-            if (syncingRef.current) return;
-            followCards(editor);
-            scheduleLayoutSave();
-          };
-          editor.getContainer().addEventListener("pointerup", onPointerUp);
-
-          // Names are DOM overlays — follow camera too (throttled).
-          let raf = 0;
-          const off = editor.store.listen(() => {
-            if (raf) return;
-            raf = window.requestAnimationFrame(() => {
-              raf = 0;
-              followCards(editor);
-              refreshHubs();
-              refreshSelection(editor);
-              onZoom?.(editor.getCamera().z);
-            });
-          });
-          // Built-in snap + arrow nudge (P1). isSnapMode is a user pref, not instance state.
-          editor.user.updateUserPreferences({ isSnapMode: true });
-          const onArrow = (e: KeyboardEvent) => {
-            if (e.key.indexOf("Arrow") !== 0) return;
-            const t = e.target as HTMLElement | null;
-            if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA")) return;
-            const selected = editor.getSelectedShapes();
-            if (!selected.length) return;
-            const step = e.shiftKey ? 10 : 1;
-            const dx = e.key === "ArrowLeft" ? -step : e.key === "ArrowRight" ? step : 0;
-            const dy = e.key === "ArrowUp" ? -step : e.key === "ArrowDown" ? step : 0;
-            if (!dx && !dy) return;
-            e.preventDefault();
-            editor.run(() => {
-              for (const s of selected) {
-                editor.updateShape({
-                  id: s.id,
-                  type: s.type,
-                  x: s.x + dx,
-                  y: s.y + dy,
-                } as never);
-              }
-            });
-            scheduleLayoutSave();
-          };
-          window.addEventListener("keydown", onArrow);
-          const onEditorChange = () => {
-            if (cameraTimerRef.current != null) window.clearTimeout(cameraTimerRef.current);
-            cameraTimerRef.current = window.setTimeout(() => {
-              cameraTimerRef.current = null;
-              persistCamera();
-            }, 300);
-          };
-          editor.on("change", onEditorChange);
-
-          const root = editor.getContainer();
-          const onDbl = (e: MouseEvent) => {
-            const pagePt = editor.screenToPage({ x: e.clientX, y: e.clientY });
-            const under = editor.getShapesAtPoint(pagePt);
-            let key: string | undefined;
-            let role: string | undefined;
-            for (const s of under) {
-              const m = metaOf(s);
-              if (m.role === "label" || m.role === "badge" || m.role === "layer" || m.role === "source") {
-                key = m.layerId;
-                role = m.role;
-                if (role === "label" || role === "badge") break;
-              }
-            }
-            log.debug("tldraw", "dblclick", {
-              n: under.length,
-              key,
-              role,
-              ids: under.map((s) => s.id).slice(0, 4),
-            });
-            if (role === "label" || role === "badge") {
-              e.preventDefault();
-              e.stopPropagation();
-              if (key && key !== "source") {
-                setEditingIdRef.current(key);
-              }
-              return;
-            }
-            if (key && String(key).startsWith("group:")) {
-              e.preventDefault();
-              e.stopPropagation();
-              setEnteredGroupRef.current(String(key).slice(6));
-              return;
-            }
-            e.stopPropagation();
-          };
-          window.addEventListener("dblclick", onDbl, true);
-
-          const cancelIfBusy = () => {
-            const inputs = editor.inputs as unknown as {
-              getIsDragging?: () => boolean;
-              getIsPointing?: () => boolean;
-              isDragging?: boolean;
-              isPointing?: boolean;
-            };
-            const busy =
-              inputs.getIsDragging?.() ||
-              inputs.getIsPointing?.() ||
-              inputs.isDragging ||
-              inputs.isPointing;
-            if (busy) {
-              editor.cancel();
-              return true;
-            }
-            return false;
-          };
-          const onCtx = (e: MouseEvent) => {
-            e.preventDefault();
-            e.stopPropagation();
-            cancelIfBusy();
-          };
-          const onDown = (e: PointerEvent) => {
-            if (e.button === 2) cancelIfBusy();
-          };
-          const onKey = (e: KeyboardEvent) => {
-            if (e.key === "Escape") {
-              if (enteredGroupRef.current) {
-                setEnteredGroupId(null);
-                return;
-              }
-              cancelIfBusy();
-            }
-          };
-          root.addEventListener("contextmenu", onCtx, true);
-          root.addEventListener("pointerdown", onDown, true);
-          window.addEventListener("keydown", onKey);
-
-          return () => {
-            window.clearTimeout(boot);
-            off();
-            window.removeEventListener("keydown", onArrow);
-            editor.getContainer().removeEventListener("pointerup", onPointerUp);
-            editor.off("change", onEditorChange);
-            window.removeEventListener("dblclick", onDbl, true);
-            root.removeEventListener("contextmenu", onCtx, true);
-            root.removeEventListener("pointerdown", onDown, true);
-            window.removeEventListener("keydown", onKey);
-            if (raf) window.cancelAnimationFrame(raf);
-            if (layoutTimerRef.current != null) window.clearTimeout(layoutTimerRef.current);
-            if (cameraTimerRef.current != null) window.clearTimeout(cameraTimerRef.current);
-          };
-        }}
-      />
-
-      <div className="name-layer">
-        {badges.map((b) => (
+        {viewCards.map((c) => (
           <div
-            key={`b-${b.key}`}
-            className={b.dim ? "order-badge dim" : "order-badge"}
-            style={{ left: b.x, top: b.y }}
+            key={c.key}
+            data-lf-card={c.key}
+            className={`lf-card ${c.kind} ${selected.includes(c.key) ? "is-sel" : ""} ${c.dim ? "is-dim" : ""}`}
+            style={{ left: c.x, top: c.y, width: c.w, height: c.h }}
+            onDoubleClick={(e) => {
+              e.stopPropagation();
+              onDblCard(c.key);
+            }}
           >
-            {b.n}
-          </div>
-        ))}
-        {names.map((n) =>
-          editingId === n.key ? null : (
+            <img className="lf-card-img" src={c.url} alt="" draggable={false} />
+            {c.orderN != null && <div className="lf-card-badge">{c.orderN}</div>}
             <div
-              key={n.key}
-              className={n.dim ? "name-stick dim" : "name-stick"}
-              style={{ left: n.x, top: n.y, width: n.w }}
+              className="lf-card-name"
               onDoubleClick={(e) => {
                 e.stopPropagation();
-                if (n.key === "source") return;
-                setEditingId(n.key);
+                if (c.key !== "source") setEditingId(c.key);
               }}
             >
-              {n.name}
+              {c.name}
             </div>
-          ),
-        )}
-      </div>
-      {editingId &&
-        (() => {
-          const n = names.find((x) => x.key === editingId);
-          if (!n) return null;
-          return (
-            <input
-              key={`edit-${editingId}`}
-              className="name-edit"
-              style={{ left: n.x, top: n.y, width: n.w }}
-              autoFocus
-              defaultValue={n.name}
-              onPointerDown={(e) => e.stopPropagation()}
-              onBlur={(e) => {
-                const value = e.currentTarget.value.trim();
-                setEditingId(null);
-                if (!value || editingId === "source") return;
-                if (String(editingId).startsWith("group:")) {
-                  onRenameGroup?.(String(editingId).slice(6), value);
-                } else {
-                  onRename?.(editingId, value);
-                }
-              }}
-              onKeyDown={(e) => {
-                e.stopPropagation();
-                if (e.key === "Enter") {
-                  const value = e.currentTarget.value.trim();
-                  setEditingId(null);
-                  if (!value || editingId === "source") return;
-                  if (String(editingId).startsWith("group:")) {
-                    onRenameGroup?.(String(editingId).slice(6), value);
-                  } else {
-                    onRename?.(editingId, value);
-                  }
-                }
-                if (e.key === "Escape") setEditingId(null);
-              }}
-            />
-          );
-        })()}
-      {envelope && (
-        <div
-          className="group-envelope"
-          aria-hidden
-          style={{ left: envelope.x, top: envelope.y, width: envelope.w, height: envelope.h }}
-        />
-      )}
-      <div className="junction-layer">
-        {hubs.map((t) => (
-          <button
-            key={t.key}
-            type="button"
-            className="junction-dot"
-            style={{ left: t.x, top: t.y }}
-            title="解组"
-            onClick={() => onUngroup(t.groupId)}
-          >
-            <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden>
-              <rect x="2" y="2" width="5" height="5" stroke="currentColor" fill="none" />
-              <rect x="9" y="2" width="5" height="5" stroke="currentColor" fill="none" />
-              <rect x="2" y="9" width="5" height="5" stroke="currentColor" fill="none" />
-              <rect x="9" y="9" width="5" height="5" stroke="currentColor" fill="none" />
-            </svg>
-          </button>
+          </div>
         ))}
       </div>
 
@@ -1288,41 +782,57 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
           <button type="button" onClick={() => setEnteredGroupId(null)}>
             ← 退出组
           </button>
-          <span>
-            {groupsRef.current.find((g) => g.id === enteredGroupId)?.name ?? enteredGroupId}
-          </span>
+          <span>{groups.find((g) => g.id === enteredGroupId)?.name ?? enteredGroupId}</span>
         </div>
       )}
 
-      {selLayers.length > 0 && !selGroup && toolPos && (
+      {minimap && viewCards.length > 0 && (
+        <div className="lf-minimap" aria-hidden>
+          {viewCards.map((c) => (
+            <i
+              key={c.key}
+              style={{
+                left: `${((c.x + 600) / 2400) * 100}%`,
+                top: `${((c.y + 400) / 1600) * 100}%`,
+                width: `${(c.w / 2400) * 100}%`,
+                height: `${(c.h / 1600) * 100}%`,
+                opacity: c.dim ? 0.25 : 0.85,
+              }}
+            />
+          ))}
+        </div>
+      )}
+
+      {selLayerIds.length > 0 && !selGroup && toolPos && (
         <div
           className="sel-tools"
           style={{ left: toolPos.x, top: toolPos.y, transform: "translate(-50%, -100%)" }}
         >
-          {selLayers.length === 1 && (
+          {selLayerIds.length === 1 && (
             <div className="tool-group" data-group="layer">
-              <button type="button" title="层序↑" onClick={() => onMoveOrder(selLayers[0], "up")}>
+              <button type="button" title="层序↑" onClick={() => onMoveOrder(selLayerIds[0], "up")}>
                 ↑
               </button>
-              <button type="button" title="层序↓" onClick={() => onMoveOrder(selLayers[0], "down")}>
+              <button type="button" title="层序↓" onClick={() => onMoveOrder(selLayerIds[0], "down")}>
                 ↓
               </button>
               <button
                 type="button"
                 title="锁定/解锁"
                 onClick={() => {
-                  const layer = layersRef.current.find((l) => l.id === selLayers[0]);
+                  const layer = layers.find((l) => l.id === selLayerIds[0]);
                   if (!layer) return;
                   onSetFlags?.(layer.id, { locked: !layer.locked });
                 }}
               >
-                {layersRef.current.find((l) => l.id === selLayers[0])?.locked ? "🔒" : "🔓"}
+                {layers.find((l) => l.id === selLayerIds[0])?.locked ? "🔒" : "🔓"}
               </button>
               <button
                 type="button"
                 title="删除此层"
+                data-cmd="delete"
                 onClick={() => {
-                  const id = selLayers[0];
+                  const id = selLayerIds[0];
                   if (id) onDeleteLayer?.(id);
                 }}
               >
@@ -1330,10 +840,10 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
               </button>
             </div>
           )}
-          {selLayers.length >= 2 && (
+          {selLayerIds.length >= 2 && (
             <>
               <div className="tool-group" data-group="order">
-                <button type="button" title="倒序" onClick={() => onReverseOrder?.(selLayers)}>
+                <button type="button" title="倒序" onClick={() => onReverseOrder?.(selLayerIds)}>
                   ⇅
                 </button>
                 <button type="button" title="按序排布" onClick={layoutByOrder}>
@@ -1368,20 +878,57 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
                   type="button"
                   className="primary icon-btn"
                   title="打组"
+                  data-cmd="group"
                   onClick={() => {
-                    stackNow(selLayers);
-                    onGroup(selLayers);
+                    stackNow();
+                    onGroup(selLayerIds);
                   }}
                 >
-                  <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden>
-                    <rect x="2" y="6" width="9" height="7" rx="1.2" stroke="currentColor" fill="none" />
-                    <rect x="4" y="3.5" width="9" height="7" rx="1.2" stroke="currentColor" fill="#fff" />
-                    <rect x="6" y="1.5" width="8" height="7" rx="1.2" stroke="currentColor" fill="#fff" />
-                  </svg>
+                  打组
                 </button>
               </div>
             </>
           )}
+        </div>
+      )}
+
+      {editingId && (
+        <input
+          className="name-edit"
+          autoFocus
+          defaultValue={
+            viewCards.find((c) => c.key === editingId)?.name ?? ""
+          }
+          style={{
+            left: (viewport.x + (viewCards.find((c) => c.key === editingId)?.x ?? 0) * viewport.z),
+            top:
+              viewport.y +
+              ((viewCards.find((c) => c.key === editingId)?.y ?? 0) +
+                (viewCards.find((c) => c.key === editingId)?.h ?? 0) +
+                4) *
+                viewport.z,
+            width: (viewCards.find((c) => c.key === editingId)?.w ?? 200) * viewport.z,
+          }}
+          onPointerDown={(e) => e.stopPropagation()}
+          onBlur={(e) => commitName(e.currentTarget.value)}
+          onKeyDown={(e) => {
+            e.stopPropagation();
+            if (e.key === "Enter") commitName(e.currentTarget.value);
+            if (e.key === "Escape") setEditingId(null);
+          }}
+        />
+      )}
+
+      {selGroup && !selLayerIds.length && (
+        <div
+          className="sel-tools"
+          style={{ left: toolPos?.x ?? 24, top: toolPos?.y ?? 24, transform: "translate(-50%, -100%)" }}
+        >
+          <div className="tool-group" data-group="action">
+            <button type="button" title="解组" onClick={() => onUngroup(selGroup)}>
+              解组
+            </button>
+          </div>
         </div>
       )}
     </div>
