@@ -83,12 +83,8 @@ async function main() {
   );
 
   // rename
-  await page.evaluate(() => {
-    document
-      .querySelector('[data-lf-card="base"] .lf-card-name')
-      ?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
-  });
-  await page.waitForTimeout(200);
+  await page.locator('[data-lf-card="base"] .lf-card-name').dblclick({ force: true });
+  await page.waitForTimeout(250);
   await page.locator(".name-edit").fill("底板-测试");
   await page.locator(".name-edit").press("Enter");
   await page.waitForTimeout(700);
@@ -129,11 +125,7 @@ async function main() {
   check("I 组卡合成预览", names.some((n) => n.includes("合成预览")), JSON.stringify(names));
 
   // enter group
-  await page.evaluate(() => {
-    document
-      .querySelector('[data-lf-card^="group:"]')
-      ?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
-  });
+  await page.locator('[data-lf-card^="group:"]').dblclick({ force: true });
   await page.waitForTimeout(400);
   check("J 双击进组隔离", (await page.locator(".enter-chip").count()) === 1);
   await page.keyboard.press("Escape");

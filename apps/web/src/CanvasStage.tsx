@@ -279,6 +279,19 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
     setCardPos({});
   }, [layers, groups]);
 
+  // Double-click via click-count (more reliable than native dblclick under capture)
+  const lastClickRef = useRef<{ key: string; t: number; name: boolean } | null>(null);
+
+  const handleCardAction = useCallback((key: string, fromName: boolean) => {
+    if (key === "source") return;
+    if (key.startsWith("group:")) {
+      if (fromName) setEditingId(key);
+      else setEnteredGroupId(key.slice(6));
+      return;
+    }
+    setEditingId(key);
+  }, []);
+
   const applyDrag = useCallback(
     (keys: string[], primaryKey: string, nx: number, ny: number) => {
       const primary = viewCardsRef.current.find((c) => c.key === primaryKey);
@@ -474,6 +487,8 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
       const key = cardEl.dataset.lfCard!;
       const card = cardsRef.current.find((c) => c.key === key);
       if (!card) return;
+      const fromName = Boolean((e.target as HTMLElement).closest(".lf-card-name"));
+      // double-click detection on pointerup (see onPointerUp)
       if (e.shiftKey || e.metaKey || e.ctrlKey) {
         setSelected((prev) =>
           prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key],
@@ -481,8 +496,7 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
       } else {
         setSelected((prev) => (prev.includes(key) ? prev : [key]));
       }
-      if (card.locked) return;
-      // Don't capture until a real drag starts — keeps dblclick working.
+      if (card.locked && !fromName) return;
       const w = toWorld(e.clientX, e.clientY);
       dragRef.current = {
         key,
@@ -492,7 +506,6 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
         origY: card.y,
         moved: false,
       };
-      el.setPointerCapture(e.pointerId);
     };
 
     const onPointerMove = (e: PointerEvent) => {
@@ -580,8 +593,21 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
       applyDrag(keys, d.key, nx, ny);
     };
 
-    const onPointerUp = () => {
-      if (dragRef.current?.moved) scheduleSave();
+    const onPointerUp = (e: PointerEvent) => {
+      const d = dragRef.current;
+      if (d?.moved) scheduleSave();
+      // treat as double-click when two quick pointerups on same card without drag
+      if (d && !d.moved) {
+        const now = Date.now();
+        const prev = lastClickRef.current;
+        const fromName = Boolean((e.target as HTMLElement).closest(".lf-card-name"));
+        if (prev && prev.key === d.key && now - prev.t < 350) {
+          lastClickRef.current = null;
+          handleCardAction(d.key, fromName || prev.name);
+        } else {
+          lastClickRef.current = { key: d.key, t: now, name: fromName };
+        }
+      }
       dragRef.current = null;
       panRef.current = null;
       marqueeRef.current = null;
@@ -602,7 +628,7 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
       el.removeEventListener("pointerup", onPointerUp);
       el.removeEventListener("pointercancel", onPointerUp);
     };
-  }, [toWorld, zoomAt, scheduleSave, applyDrag]);
+  }, [toWorld, zoomAt, scheduleSave, applyDrag, handleCardAction]);
 
   // ── keyboard ───────────────────────────────────────────────────────
   useEffect(() => {
@@ -662,25 +688,6 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
   useEffect(() => {
     setCardPos({});
   }, [layers, groups]);
-
-  // Reliable dblclick (pointer capture can swallow native dblclick in some hosts)
-  useEffect(() => {
-    const onDbl = (e: MouseEvent) => {
-      const el = (e.target as HTMLElement | null)?.closest?.("[data-lf-card]") as HTMLElement | null;
-      const key = el?.dataset.lfCard;
-      if (!key) return;
-      const t = e.target as HTMLElement;
-      const isName = t.closest(".lf-card-name");
-      if (isName && key !== "source") {
-        setEditingId(key);
-        return;
-      }
-      if (key.startsWith("group:")) setEnteredGroupId(key.slice(6));
-      else if (key !== "source") setEditingId(key);
-    };
-    window.addEventListener("dblclick", onDbl, true);
-    return () => window.removeEventListener("dblclick", onDbl, true);
-  }, []);
 
   // ── selection tools ────────────────────────────────────────────────
   const align = (mode: "left" | "centerX" | "right" | "top" | "middleY" | "bottom") => {
@@ -750,15 +757,6 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
       return next;
     });
     scheduleSave();
-  };
-
-  // double-click
-  const onDblCard = (key: string) => {
-    if (key.startsWith("group:")) {
-      setEnteredGroupId(key.slice(6));
-      return;
-    }
-    if (key !== "source") setEditingId(key);
   };
 
   // group selection → tools
@@ -870,7 +868,7 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
             style={{ left: c.x, top: c.y, width: c.w, height: c.h }}
             onDoubleClick={(e) => {
               e.stopPropagation();
-              onDblCard(c.key);
+              handleCardAction(c.key, false);
             }}
           >
             <img className="lf-card-img" src={c.url} alt="" draggable={false} />
@@ -879,7 +877,7 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
               className="lf-card-name"
               onDoubleClick={(e) => {
                 e.stopPropagation();
-                if (c.key !== "source") setEditingId(c.key);
+                handleCardAction(c.key, true);
               }}
             >
               {c.name}
@@ -995,7 +993,11 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
                     onGroup(selLayerIds);
                   }}
                 >
-                  打组
+                  <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden>
+                    <rect x="2" y="6" width="9" height="7" rx="1.2" stroke="currentColor" fill="none" />
+                    <rect x="4" y="3.5" width="9" height="7" rx="1.2" stroke="currentColor" fill="#fff" />
+                    <rect x="6" y="1.5" width="8" height="7" rx="1.2" stroke="currentColor" fill="#fff" />
+                  </svg>
                 </button>
               </div>
             </>
@@ -1037,7 +1039,12 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
         >
           <div className="tool-group" data-group="action">
             <button type="button" title="解组" onClick={() => onUngroup(selGroup)}>
-              解组
+              <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden>
+                <rect x="2" y="2" width="5" height="5" stroke="currentColor" fill="none" />
+                <rect x="9" y="2" width="5" height="5" stroke="currentColor" fill="none" />
+                <rect x="2" y="9" width="5" height="5" stroke="currentColor" fill="none" />
+                <rect x="9" y="9" width="5" height="5" stroke="currentColor" fill="none" />
+              </svg>
             </button>
           </div>
         </div>
