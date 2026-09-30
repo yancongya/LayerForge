@@ -82,6 +82,19 @@ async function main() {
     `${JSON.stringify(before)} → ${JSON.stringify(mid)}`,
   );
 
+  // right-click undoes the move (and does not open browser menu)
+  await page.locator(".canvas-stage").click({ button: "right", force: true });
+  await page.waitForTimeout(700);
+  const afterRmb = await page.evaluate(() => {
+    const r = document.querySelector('[data-lf-card="base"]').getBoundingClientRect();
+    return { x: Math.round(r.left), y: Math.round(r.top) };
+  });
+  check(
+    "D2 右键撤销移动",
+    Math.abs(afterRmb.x - before.x) < 40 && Math.abs(afterRmb.y - before.y) < 40,
+    `afterRmb=${JSON.stringify(afterRmb)} before=${JSON.stringify(before)}`,
+  );
+
   // rename
   await page.locator('[data-lf-card="base"] .lf-card-name').dblclick({ force: true });
   await page.waitForTimeout(250);
@@ -128,6 +141,18 @@ async function main() {
   await page.locator('[data-lf-card^="group:"]').dblclick({ force: true });
   await page.waitForTimeout(400);
   check("J 双击进组隔离", (await page.locator(".enter-chip").count()) === 1);
+
+  // layer tools inside isolation
+  await page.locator('[data-lf-card="base"]').click({ force: true });
+  await page.waitForTimeout(250);
+  const isoTools = await page
+    .locator(".sel-tools button")
+    .evaluateAll((els) => els.map((e) => e.title));
+  check(
+    "P 组内单层工具条",
+    isoTools.includes("删除此层") || isoTools.includes("层序↑"),
+    JSON.stringify(isoTools),
+  );
   await page.keyboard.press("Escape");
   await page.waitForTimeout(300);
 

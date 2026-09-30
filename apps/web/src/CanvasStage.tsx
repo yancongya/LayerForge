@@ -40,6 +40,7 @@ type Props = {
   onSaveLayout?: (layers: LayoutItem[], groups: LayoutItem[]) => void;
   onZoom?: (z: number) => void;
   showMinimap?: boolean;
+  onUndo?: () => void;
 };
 
 type Card = {
@@ -92,6 +93,7 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
     onSaveLayout,
     onZoom,
     showMinimap = true,
+    onUndo,
   },
   ref,
 ) {
@@ -615,11 +617,19 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
       setGuides([]);
     };
 
+    const onCtx = (e: MouseEvent) => {
+      // Right-click = undo last mutation (incl. drag), never the browser menu.
+      e.preventDefault();
+      e.stopPropagation();
+      onUndo?.();
+    };
+
     el.addEventListener("wheel", onWheel, { passive: false });
     el.addEventListener("pointerdown", onPointerDown);
     el.addEventListener("pointermove", onPointerMove);
     el.addEventListener("pointerup", onPointerUp);
     el.addEventListener("pointercancel", onPointerUp);
+    el.addEventListener("contextmenu", onCtx);
 
     return () => {
       el.removeEventListener("wheel", onWheel);
@@ -627,8 +637,9 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
       el.removeEventListener("pointermove", onPointerMove);
       el.removeEventListener("pointerup", onPointerUp);
       el.removeEventListener("pointercancel", onPointerUp);
+      el.removeEventListener("contextmenu", onCtx);
     };
-  }, [toWorld, zoomAt, scheduleSave, applyDrag, handleCardAction]);
+  }, [toWorld, zoomAt, scheduleSave, applyDrag, handleCardAction, onUndo]);
 
   // ── keyboard ───────────────────────────────────────────────────────
   useEffect(() => {
@@ -761,9 +772,8 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
 
   // group selection → tools
   const selLayerIds = selected.filter((k) => !k.startsWith("group:") && k !== "source");
-  const selGroup =
-    selected.find((k) => k.startsWith("group:"))?.slice(6) ??
-    (enteredGroupId || null);
+  // Group-card selection only — isolation mode must still allow per-layer tools.
+  const selGroup = selected.find((k) => k.startsWith("group:"))?.slice(6) ?? null;
 
   // tool position above selection in screen space
   useEffect(() => {
@@ -912,7 +922,7 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
         </div>
       )}
 
-      {selLayerIds.length > 0 && !selGroup && toolPos && (
+      {selLayerIds.length > 0 && toolPos && (
         <div
           className="sel-tools"
           style={{ left: toolPos.x, top: toolPos.y, transform: "translate(-50%, -100%)" }}

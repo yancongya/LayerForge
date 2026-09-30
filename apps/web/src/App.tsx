@@ -413,6 +413,8 @@ export default function App() {
   };
 
   const onSaveLayout = useCallback(async (items: LayoutItem[], groupItems: LayoutItem[]) => {
+    // Drag/arrange is an undoable unit.
+    pushUndo();
     const toPatch = (list: LayoutItem[]): LayoutPatch[] =>
       list.map((i) => ({ id: i.id, x: i.x, y: i.y, w: i.w, h: i.h }));
     try {
@@ -542,6 +544,7 @@ export default function App() {
             onDeleteLayer={(id) => void onDelete(id)}
             onSetFlags={(id, flags) => void onSetFlags(id, flags)}
             onSaveLayout={(ls, gs) => void onSaveLayout(ls, gs)}
+            onUndo={() => void onUndo()}
             onZoom={(z) => setZoomPct(Math.round(z * 100))}
             showMinimap={showMinimap}
           />
