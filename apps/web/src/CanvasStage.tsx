@@ -41,6 +41,7 @@ type Props = {
   onGroup: (memberIds: string[]) => void;
   onUngroup: (groupId: string) => void;
   onMoveOrder: (layerId: string, dir: "up" | "down") => void;
+  onReverseOrder?: (layerIds: string[]) => void;
   onRename?: (layerId: string, name: string) => void;
   onRenameGroup?: (groupId: string, name: string) => void;
   onDeleteLayer?: (layerId: string) => void;
@@ -163,6 +164,7 @@ function ensureAsset(
 
 type Hub = { key: string; x: number; y: number; groupId: string };
 type NameLabel = { key: string; name: string; x: number; y: number; w: number };
+type OrderBadge = { key: string; n: number; x: number; y: number };
 
 const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
   {
@@ -174,6 +176,7 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
     onGroup,
     onUngroup,
     onMoveOrder,
+    onReverseOrder,
     onRename,
     onRenameGroup,
     onDeleteLayer,
@@ -196,6 +199,7 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
   const [selGroup, setSelGroup] = useState<string | null>(null);
   const [hubs, setHubs] = useState<Hub[]>([]);
   const [names, setNames] = useState<NameLabel[]>([]);
+  const [badges, setBadges] = useState<OrderBadge[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [toolPos, setToolPos] = useState<{ x: number; y: number } | null>(null);
 
@@ -258,7 +262,8 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
     const editor = editorRef.current;
     if (!editor) return;
     const collected: NameLabel[] = [];
-    const pin = (key: string, name: string) => {
+    const orderBadges: OrderBadge[] = [];
+    const pin = (key: string, name: string, orderN?: number) => {
       const el = rootRef.current?.querySelector(`[data-shape-id="${imgId(key)}"]`);
       if (!el || !rootRef.current) return;
       const wr = rootRef.current.getBoundingClientRect();
@@ -270,15 +275,28 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
         y: r.bottom - wr.top + 2,
         w: r.width,
       });
+      if (orderN != null) {
+        orderBadges.push({
+          key,
+          n: orderN,
+          x: r.left - wr.left + 8,
+          y: r.top - wr.top + 8,
+        });
+      }
     };
     if (sourceRef.current) pin("source", "原图");
-    for (const layer of layersRef.current) {
-      if (layer.groupId) continue;
-      pin(layer.id, layer.name);
-    }
-    for (const g of groupsRef.current) {
-      pin(`group:${g.id}`, compositeRef.current ? `${g.name} · 合成预览` : g.name);
-    }
+    const freeSorted = layersRef.current
+      .filter((l) => !l.groupId)
+      .sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
+    freeSorted.forEach((layer, i) => {
+      pin(layer.id, layer.name, i + 1);
+    });
+    groupsRef.current
+      .slice()
+      .sort((a, b) => a.order - b.order || a.id.localeCompare(b.id))
+      .forEach((g, i) => {
+        pin(`group:${g.id}`, compositeRef.current ? `${g.name} · 合成预览` : g.name, i + 1);
+      });
 
     const chips: Hub[] = [];
     for (const g of groupsRef.current) {
@@ -289,6 +307,7 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
     }
     setHubs(chips);
     setNames(collected);
+    setBadges(orderBadges);
   }, []);
 
   /** Last geometry we flushed to layers.json — skip no-op saves (breaks applyProject loops). */
@@ -668,6 +687,31 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
     scheduleLayoutSave();
   };
 
+  /** Snap free-layer cards into one top row ordered by `order` (same rhythm as decompose). */
+  const layoutByOrder = () => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    const free = layersRef.current
+      .filter((l) => !l.groupId)
+      .sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
+    let x = 0;
+    const items: LayoutItem[] = [];
+    for (const layer of free) {
+      const s = editor.getShape(imgId(layer.id)) as TLImageShape | undefined;
+      const w = s?.props.w ?? layer.w ?? 280;
+      const h = s?.props.h ?? layer.h ?? 373;
+      if (s) {
+        editor.updateShape<TLImageShape>({ id: s.id, type: "image", x, y: 0 });
+      }
+      items.push({ id: layer.id, x, y: 0, w, h });
+      x += w + CARD_GAP;
+    }
+    if (items.length) {
+      lastSavedRef.current = JSON.stringify({ l: items, g: [] });
+      onSaveLayout?.(items, []);
+    }
+  };
+
   const align = (mode: "left" | "centerX" | "right" | "top" | "middleY" | "bottom") => {
     const editor = editorRef.current;
     if (!editor) return;
@@ -869,6 +913,13 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
           ),
         )}
       </div>
+      <div className="order-layer" aria-hidden>
+        {badges.map((b) => (
+          <div key={b.key} className="order-badge" style={{ left: b.x, top: b.y }}>
+            {b.n}
+          </div>
+        ))}
+      </div>
       <div className="junction-layer">
         {hubs.map((t) => (
           <button
@@ -894,6 +945,16 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
           className="sel-tools"
           style={{ left: toolPos.x, top: toolPos.y, transform: "translate(-50%, -100%)" }}
         >
+          {selLayers.length >= 2 && (
+            <>
+              <button type="button" title="倒序" onClick={() => onReverseOrder?.(selLayers)}>
+                ⇅
+              </button>
+              <button type="button" title="按序排布" onClick={layoutByOrder}>
+                ⇄
+              </button>
+            </>
+          )}
           {selLayers.length === 1 && !selGroup && (
             <>
               <button type="button" title="层序↑" onClick={() => onMoveOrder(selLayers[0], "up")}>

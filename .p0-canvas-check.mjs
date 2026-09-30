@@ -258,6 +258,34 @@ async function main() {
   });
   check("5 卡片比例匹配图片", aspectOk);
 
+  // order badges + multi-only sort tools
+  const badgeTexts = await page.locator(".order-badge").allTextContents();
+  // clear selection then select one
+  await page.keyboard.press("Escape");
+  await page.locator(shapeSel("fg")).click({ force: true }).catch(() => {});
+  await page.waitForTimeout(250);
+  const singleTitles = await page
+    .locator(".sel-tools button")
+    .evaluateAll((els) => els.map((e) => e.title));
+  const singleHasSort = singleTitles.includes("倒序") || singleTitles.includes("按序排布");
+  // rubber-band select both free cards
+  await page.mouse.move(200, 200);
+  await page.mouse.down();
+  await page.mouse.move(1300, 800, { steps: 8 });
+  await page.mouse.up();
+  await page.waitForTimeout(350);
+  const multiTitles = await page
+    .locator(".sel-tools button")
+    .evaluateAll((els) => els.map((e) => e.title));
+  check(
+    "7 序号角标 + 排序工具仅多选",
+    badgeTexts.length > 0 &&
+      !singleHasSort &&
+      multiTitles.includes("倒序") &&
+      multiTitles.includes("按序排布"),
+    `badges=${JSON.stringify(badgeTexts)} single=${JSON.stringify(singleTitles)} multi=${JSON.stringify(multiTitles)}`,
+  );
+
   await page.screenshot({ path: "F:/LayerForge/.p0-canvas-check.png", fullPage: true });
   await browser.close();
 

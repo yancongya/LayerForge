@@ -170,6 +170,27 @@ export default function App() {
     }
   };
 
+  /** Reverse the selected layers' relative order; others stay put. */
+  const onReverseOrder = async (selected: string[]) => {
+    const ids = layers.map((l) => l.id);
+    const selectedSet = new Set(selected);
+    const picked = ids.filter((id) => selectedSet.has(id));
+    if (picked.length < 2) return;
+    const reversed = picked.slice().reverse();
+    let k = 0;
+    const next = ids.map((id) => (selectedSet.has(id) ? reversed[k++] : id));
+    setBusy(true);
+    try {
+      const data = await reorderLayers(project.id, next);
+      applyProject(data);
+      setStatus({ kind: "ok", text: `已倒序 ${reversed.join("→")}` });
+    } catch (err) {
+      setStatus({ kind: "err", text: err instanceof Error ? err.message : String(err) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const onGroup = async (memberIds: string[]) => {
     log.info("app", "onGroup click", { memberIds });
     setBusy(true);
@@ -368,6 +389,7 @@ export default function App() {
             onGroup={(ids) => void onGroup(ids)}
             onUngroup={(gid) => void onUngroup(gid)}
             onMoveOrder={(id, dir) => void onMove(id, dir)}
+            onReverseOrder={(ids) => void onReverseOrder(ids)}
             onRename={(id, name) => void onRename(id, name)}
             onRenameGroup={(gid, name) => void onRenameGroup(gid, name)}
             onDeleteLayer={(id) => void onDelete(id)}
