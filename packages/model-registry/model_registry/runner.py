@@ -153,35 +153,18 @@ def _run_local(
     out: Path,
     p: LayeredDecomposeParams,
 ) -> dict[str, Any]:
-    import torch
-    from diffusers import QwenImageLayeredPipeline
-    from PIL import Image
+    # Copied pipeline path lives in qwen_local.py (from reference/qwen-image-layered/src/app.py)
+    from .qwen_local import infer_layers
 
-    dtype = {"bfloat16": torch.bfloat16, "float16": torch.float16, "float32": torch.float32}.get(
-        provider.dtype, torch.bfloat16
-    )
-    pipe = QwenImageLayeredPipeline.from_pretrained(
-        provider.model_id,
-        torch_dtype=dtype,
+    files = infer_layers(
+        src,
+        out,
+        p,
+        model_id=provider.model_id,
+        device=provider.device,
+        dtype_name=provider.dtype,
         local_files_only=provider.local_files_only,
     )
-    device = provider.device
-    pipe = pipe.to(device)
-    image = Image.open(src).convert("RGBA")
-    gen = torch.Generator(device=device).manual_seed(int(p.seed))
-    inputs = p.to_pipeline_kwargs()
-    inputs["image"] = image
-    inputs["generator"] = gen
-    # map registry names → pipeline
-    inputs.setdefault("negative_prompt", p.neg_prompt)
-    with torch.inference_mode():
-        output = pipe(**inputs)
-    images = output.images[0] if isinstance(output.images, (list, tuple)) else [output.images]
-    files: list[str] = []
-    for i, img in enumerate(images):
-        name = f"layer_{i:02d}.png"
-        img.save(out / name)
-        files.append(name)
     return {
         "provider": provider.id,
         "status": "local",

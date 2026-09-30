@@ -101,7 +101,7 @@ def handle_export_layers(params: dict[str, Any]) -> Any:
     raw_formats = params.get("formats") or ["png-seq", "zip", "composite"]
     if not isinstance(raw_formats, list) or not all(isinstance(item, str) for item in raw_formats):
         raise ValueError("param 'formats' must be an array of strings")
-    allowed = {"png-seq", "zip", "composite"}
+    allowed = {"png-seq", "zip", "composite", "pptx", "psd"}
     unknown = [item for item in raw_formats if item not in allowed]
     if unknown:
         raise ValueError(f"unknown formats: {unknown}; allowed={sorted(allowed)}")
@@ -139,7 +139,6 @@ def handle_decompose(params: dict[str, Any]) -> Any:
 
     _ensure_model_registry()
     from model_registry import run_decompose
-    from layer_core.decompose import mock_decompose  # type: ignore
 
     raw_params = params.get("params") or {}
     try:
@@ -147,30 +146,24 @@ def handle_decompose(params: dict[str, Any]) -> Any:
     except Exception as exc:  # noqa: BLE001
         raise ValueError(f"decompose failed: {exc}") from exc
 
-    # Always leave a valid layers.json for the app (prefer layer-core mock layout if empty)
-    layers_file = root / "layers.json"
-    if not layers_file.is_file():
-        mock_decompose(root, src, layer_count=int(raw_params.get("layer") or 3))
-        files = result.get("files") or []
-        if files:
-            # Keep semantic stack: base=bottom … fg=top (do not use glob order).
-            rank = {"base": 0, "mid": 1, "fg": 2}
-            ordered = sorted(
-                enumerate(files),
-                key=lambda pair: (rank.get(Path(pair[1]).stem, 10 + pair[0]), pair[0]),
-            )
-            mock_layers = [
-                Layer(id=Path(name).stem, name=Path(name).stem, file=f"layers/{name}", order=i)
-                for i, (_, name) in enumerate(ordered)
-            ]
-            save_layers(root, mock_layers)
+    # Rebuild layers.json from files actually on disk (semantic z-order).
+    pngs = sorted((root / "layers").glob("*.png"), key=lambda p: p.name)
+    if not pngs:
+        raise ValueError("decompose produced no layer PNGs")
+    rank = {"base": 0, "mid": 1, "fg": 2}
+    ordered_pngs = sorted(pngs, key=lambda p: (rank.get(p.stem, 10), p.name))
+    mock_layers = [
+        Layer(id=p.stem, name=p.stem, file=f"layers/{p.name}", order=i)
+        for i, p in enumerate(ordered_pngs)
+    ]
+    save_layers(root, mock_layers)
 
     layers = sort_layers_bottom_to_top(load_layers(root))
     return _ok(
         project=str(root),
         provider=result.get("provider"),
         status=result.get("status"),
-        files=result.get("files"),
+        files=[p.name for p in ordered_pngs],
         fallback_reason=result.get("fallback_reason"),
         layers=[_layer_dict(layer) for layer in layers],
     )
@@ -325,8 +318,8 @@ TOOLS: list[ToolSpec] = [
                 "out_dir": {"type": "string", "description": "Export directory; default <project>/dist"},
                 "formats": {
                     "type": "array",
-                    "items": {"type": "string", "enum": ["png-seq", "zip", "composite"]},
-                    "description": "Default: png-seq, zip, composite",
+                    "items": {"type": "string", "enum": ["png-seq", "zip", "composite", "pptx", "psd"]},
+                    "description": "Default: png-seq, zip, composite. pptx/psd from qwen export writers.",
                 },
             },
             "required": ["project"],
