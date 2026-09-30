@@ -1144,3 +1144,11 @@ button {
   padding: 0 4px;
   accent-color: var(--accent);
 }
+
+.group-envelope {
+  position: absolute;
+  z-index: 5;
+  border: 1.5px dashed rgba(37, 99, 235, 0.55);
+  border-radius: 12px;
+  pointer-events: none;
+}

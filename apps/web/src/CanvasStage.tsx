@@ -170,6 +170,7 @@ function ensureAsset(
 type Hub = { key: string; x: number; y: number; groupId: string };
 type NameLabel = { key: string; name: string; x: number; y: number; w: number; dim?: boolean };
 type OrderBadge = { key: string; n: number; x: number; y: number; dim?: boolean };
+type Envelope = { x: number; y: number; w: number; h: number } | null;
 
 const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
   {
@@ -207,12 +208,15 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
   const [hubs, setHubs] = useState<Hub[]>([]);
   const [names, setNames] = useState<NameLabel[]>([]);
   const [badges, setBadges] = useState<OrderBadge[]>([]);
+  const [envelope, setEnvelope] = useState<Envelope>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [toolPos, setToolPos] = useState<{ x: number; y: number } | null>(null);
   /** When set, canvas shows this group's members (smart-object style). Esc exits. */
   const [enteredGroupId, setEnteredGroupId] = useState<string | null>(null);
   const enteredGroupRef = useRef<string | null>(null);
   enteredGroupRef.current = enteredGroupId;
+  const selGroupRef = useRef<string | null>(null);
+  selGroupRef.current = selGroup;
 
   const commitRename = (n: NameLabel, value: string) => {
     setEditingId(null);
@@ -369,6 +373,41 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
     setHubs(chips);
     setNames(collected);
     setBadges(orderBadges);
+    // Group envelope: dashed hull around members when a group is selected or open.
+    const gid = enteredGroupRef.current ?? selGroupRef.current;
+    if (gid && rootRef.current) {
+      const wr = rootRef.current.getBoundingClientRect();
+      let minX = Infinity;
+      let minY = Infinity;
+      let maxX = -Infinity;
+      let maxY = -Infinity;
+      let any = false;
+      for (const layer of layersRef.current) {
+        if (layer.groupId !== gid) continue;
+        const el = rootRef.current.querySelector(`[data-shape-id="${imgId(layer.id)}"]`);
+        if (!el) continue;
+        const r = el.getBoundingClientRect();
+        minX = Math.min(minX, r.left - wr.left);
+        minY = Math.min(minY, r.top - wr.top);
+        maxX = Math.max(maxX, r.right - wr.left);
+        maxY = Math.max(maxY, r.bottom - wr.top);
+        any = true;
+      }
+      if (!enteredGroupRef.current) {
+        const gel = rootRef.current.querySelector(`[data-shape-id="${imgId(`group:${gid}`)}"]`);
+        if (gel) {
+          const r = gel.getBoundingClientRect();
+          minX = Math.min(minX, r.left - wr.left);
+          minY = Math.min(minY, r.top - wr.top);
+          maxX = Math.max(maxX, r.right - wr.left);
+          maxY = Math.max(maxY, r.bottom - wr.top);
+          any = true;
+        }
+      }
+      setEnvelope(any ? { x: minX - 10, y: minY - 10, w: maxX - minX + 20, h: maxY - minY + 20 } : null);
+    } else {
+      setEnvelope(null);
+    }
   }, []);
 
   /** Last geometry we flushed to layers.json — skip no-op saves (breaks applyProject loops). */
@@ -970,8 +1009,8 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
               onZoom?.(editor.getCamera().z);
             });
           });
-          // Built-in snap + arrow nudge (P1).
-          editor.updateInstanceState({ isSnapMode: true } as never);
+          // Built-in snap + arrow nudge (P1). isSnapMode is a user pref, not instance state.
+          editor.user.updateUserPreferences({ isSnapMode: true });
           const onArrow = (e: KeyboardEvent) => {
             if (e.key.indexOf("Arrow") !== 0) return;
             const t = e.target as HTMLElement | null;
@@ -1116,6 +1155,13 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
           ),
         )}
       </div>
+      {envelope && (
+        <div
+          className="group-envelope"
+          aria-hidden
+          style={{ left: envelope.x, top: envelope.y, width: envelope.w, height: envelope.h }}
+        />
+      )}
       <div className="order-layer" aria-hidden>
         {badges.map((b) => (
           <div

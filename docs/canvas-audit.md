@@ -287,9 +287,11 @@ app 级 undo/redo 事务化 · 单选/多选浮动工具条与尺寸读数 · �
 - **`visible` 生效于 compose**：已实现（layer-core 9/9 含此项）。
 - **删掉本阶段不需要的对标项**：见「产品边界」不做清单与 §3.2「本阶段不做」。
 
-### P1 及以后（backlog，不与 P0/P1-A 混排）
+### P1 及以后
 
-真分组包络框（显式成员，hull 不参与合成）· 自动整理多列装箱（`layout.ts` 补装箱与 shrink-to-fit 并真正 `import`）· `opacity`/`blend` 前后端同公式（先只放 `normal/multiply/screen`）· 合并图层（subset compose）· 图层面板（拖拽改 z、隔离预览、右键"此处的层"）· app 级 undo/redo 事务化（`editor.run`）· overlay 收敛到自定义 shape · 内建吸附与方向键 nudge · 视口约定（空格平移 + `minZoom/maxZoom` + `⌘0`）· Minimap · 缩放读数与 fit/100% · 快捷键表 · 实时合成预览（E4）· 草稿恢复横幅 · 资源未就绪不卡死 · PSD/PPTX 保真导出（E7）· Agent 可写面 `packages/canvas`（E8）
+**已完成（本批）**：子集/组级 compose · 多列装箱 `packCards` · `opacity`（schema+compose+滑杆）· 组映射拖拽改 z · 组包络虚线 · 吸附 + 方向键 nudge · 缩放读数/100%/`⌘0`/zoomSteps · Minimap 开关 · 快捷键面板 · F5 自动化
+
+**仍 backlog**：`blend` 公式（multiply/screen）· overlay 收敛自定义 shape · app 级 undo 事务（现仅 `editor.run` 批）· 实时合成预览（E4）· 草稿恢复横幅 · 资源未就绪不卡死 · PSD/PPTX（E7）· Agent 可写面 `packages/canvas`（E8）
 
 ### 修层能力（E2/E3，行业空白；**接入真模型时升 P0**）
 
@@ -461,11 +463,9 @@ app 级 undo/redo 事务化 · 单选/多选浮动工具条与尺寸读数 · �
 
 ### 10.3 未完成
 
-1. ~~P1-A 组级 compose~~ → **已完成**（`compose --ids/--group`，组卡 `previewUrl`）
-2. ~~F5 端到端~~ → **已完成**（`.p0-f5-decompose-check.py`：换图连拆 rev/URL/比例）
-3. **P1-B 多列装箱** → **已完成**（`layout.ts:packCards`，工具条「多列排布」）
-4. **mock 拆层保真度**：合成≠原图是 mock 设计，真模型前勿当 bug 修
-5. **其余 P1**：§5 backlog（图层面板、undo、吸附、视口、minimap…）
+1. ~~P1-A 组级 compose~~ · ~~F5~~ · ~~P1-B 多列~~ · ~~opacity~~ · ~~吸附/nudge/视口/minimap/快捷键/拖 z/包络~~
+2. **mock 拆层保真度**：合成≠原图是 mock 设计
+3. **仍 backlog**：blend 公式 · 自定义 overlay shape · app 级 undo · E4 实时预览 · 草稿恢复 · E7 PSD · E8 Agent API（见 §5）
 
 ### 10.4 后端路由速查
 
