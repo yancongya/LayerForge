@@ -30,6 +30,7 @@ export type CanvasApi = {
   fit: () => void;
   zoomIn: () => void;
   zoomOut: () => void;
+  zoomTo100: () => void;
   selectLayer: (id: string) => void;
 };
 
@@ -48,6 +49,7 @@ type Props = {
   onDeleteLayer?: (layerId: string) => void;
   onSetFlags?: (layerId: string, flags: { visible?: boolean; locked?: boolean }) => void;
   onSaveLayout?: (layers: LayoutItem[], groups: LayoutItem[]) => void;
+  onZoom?: (z: number) => void;
 };
 
 /** Actions that must stay (selection / viewport / read-only export). Everything else is dropped. */
@@ -183,6 +185,7 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
     onDeleteLayer,
     onSetFlags,
     onSaveLayout,
+    onZoom,
   },
   ref,
 ) {
@@ -245,6 +248,12 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
     fit: () => editorRef.current?.zoomToFit({ animation: { duration: 180 } }),
     zoomIn: () => editorRef.current?.zoomIn(undefined, { animation: { duration: 120 } }),
     zoomOut: () => editorRef.current?.zoomOut(undefined, { animation: { duration: 120 } }),
+    zoomTo100: () => {
+      const editor = editorRef.current;
+      if (!editor) return;
+      const cam = editor.getCamera();
+      editor.setCamera({ x: cam.x, y: cam.y, z: 1 }, { animation: { duration: 120 } });
+    },
     selectLayer: (id: string) => {
       const editor = editorRef.current;
       const sid = imgId(id);
@@ -879,6 +888,12 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
     <div className="canvas-stage" ref={rootRef}>
       <Tldraw
         colorScheme="light"
+        cameraOptions={{
+          zoomSteps: [0.1, 0.25, 0.5, 0.75, 1, 1.5, 2, 4],
+        }}
+        options={{
+          snapThreshold: 8,
+        }}
         overrides={uiOverrides}
         components={{
           Toolbar: () => null,
@@ -947,8 +962,35 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
               raf = 0;
               refreshHubs();
               refreshSelection(editor);
+              onZoom?.(editor.getCamera().z);
             });
           });
+          // Built-in snap + arrow nudge (P1).
+          editor.updateInstanceState({ isSnapMode: true } as never);
+          const onArrow = (e: KeyboardEvent) => {
+            if (e.key.indexOf("Arrow") !== 0) return;
+            const t = e.target as HTMLElement | null;
+            if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA")) return;
+            const selected = editor.getSelectedShapes();
+            if (!selected.length) return;
+            const step = e.shiftKey ? 10 : 1;
+            const dx = e.key === "ArrowLeft" ? -step : e.key === "ArrowRight" ? step : 0;
+            const dy = e.key === "ArrowUp" ? -step : e.key === "ArrowDown" ? step : 0;
+            if (!dx && !dy) return;
+            e.preventDefault();
+            editor.run(() => {
+              for (const s of selected) {
+                editor.updateShape({
+                  id: s.id,
+                  type: s.type,
+                  x: s.x + dx,
+                  y: s.y + dy,
+                } as never);
+              }
+            });
+            scheduleLayoutSave();
+          };
+          window.addEventListener("keydown", onArrow);
           const onEditorChange = () => {
             if (cameraTimerRef.current != null) window.clearTimeout(cameraTimerRef.current);
             cameraTimerRef.current = window.setTimeout(() => {
@@ -1023,6 +1065,7 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
           return () => {
             window.clearTimeout(boot);
             off();
+            window.removeEventListener("keydown", onArrow);
             editor.getContainer().removeEventListener("pointerup", onPointerUp);
             editor.off("change", onEditorChange);
             root.removeEventListener("dblclick", onDbl, true);

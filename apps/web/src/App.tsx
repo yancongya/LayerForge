@@ -46,6 +46,7 @@ export default function App() {
   const [apiOk, setApiOk] = useState<boolean | null>(null);
   const [pendingDataUrl, setPendingDataUrl] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
+  const [zoomPct, setZoomPct] = useState(100);
   const fileRef = useRef<HTMLInputElement>(null);
   const canvasApi = useRef<CanvasApi>(null);
 
@@ -143,6 +144,11 @@ export default function App() {
       if (!(e.ctrlKey || e.metaKey)) return;
       if (e.key === "=" || e.key === "+" || e.key === "-" || e.key === "_") {
         e.preventDefault();
+      }
+      // Ctrl+0 / Cmd+0 → 100% (do not browser-zoom)
+      if (e.key === "0") {
+        e.preventDefault();
+        canvasApi.current?.zoomTo100();
       }
     };
     // passive:false is required for preventDefault on wheel; capture wins over UI handlers.
@@ -417,12 +423,21 @@ export default function App() {
             onDeleteLayer={(id) => void onDelete(id)}
             onSetFlags={(id, flags) => void onSetFlags(id, flags)}
             onSaveLayout={(ls, gs) => void onSaveLayout(ls, gs)}
+            onZoom={(z) => setZoomPct(Math.round(z * 100))}
           />
         </div>
 
         <div className="zoom-tools">
           <button type="button" title="缩小" onClick={() => canvasApi.current?.zoomOut()}>
             −
+          </button>
+          <button
+            type="button"
+            title="100%"
+            className="zoom-pct"
+            onClick={() => canvasApi.current?.zoomTo100()}
+          >
+            {zoomPct}%
           </button>
           <button type="button" title="适配" onClick={() => canvasApi.current?.fit()}>
             ⤢
