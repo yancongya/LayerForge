@@ -1,0 +1,27 @@
+{
+  "version": 2,
+  "layers": [
+    {
+      "id": "base",
+      "name": "Base",
+      "file": "layers/base.png",
+      "order": 0,
+      "groupId": null
+    },
+    {
+      "id": "mid",
+      "name": "Wash",
+      "file": "layers/mid.png",
+      "order": 1,
+      "groupId": null
+    },
+    {
+      "id": "fg",
+      "name": "Highlights",
+      "file": "layers/fg.png",
+      "order": 2,
+      "groupId": null
+    }
+  ],
+  "groups": []
+}
