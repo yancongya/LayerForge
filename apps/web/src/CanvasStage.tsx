@@ -175,78 +175,9 @@ function ensureAsset(
 }
 
 type Hub = { key: string; x: number; y: number; groupId: string };
+type NameLabel = { key: string; name: string; x: number; y: number; w: number; dim?: boolean };
+type OrderBadge = { key: string; n: number; x: number; y: number; dim?: boolean };
 type Envelope = { x: number; y: number; w: number; h: number } | null;
-
-function RenameInput({
-  shapeId,
-  rootRef,
-  defaultValue,
-  onCommit,
-  onCancel,
-}: {
-  shapeId: TLShapeId;
-  rootRef: React.RefObject<HTMLDivElement | null>;
-  defaultValue: string;
-  onCommit: (value: string) => void;
-  onCancel: () => void;
-}) {
-  const [box, setBox] = useState<{ left: number; top: number; width: number }>({
-    left: 40,
-    top: 40,
-    width: 200,
-  });
-  const armedRef = useRef(false);
-  const mountedAt = useRef(Date.now());
-  useEffect(() => {
-    const place = () => {
-      const el = document.querySelector(`[data-shape-id="${shapeId}"]`);
-      const root = rootRef.current ?? document.querySelector(".canvas-stage");
-      if (!el || !root) return;
-      const wr = root.getBoundingClientRect();
-      const r = el.getBoundingClientRect();
-      setBox({ left: r.left - wr.left, top: r.top - wr.top, width: r.width });
-    };
-    place();
-    const t = window.setInterval(place, 50);
-    return () => window.clearInterval(t);
-  }, [shapeId, rootRef]);
-  return (
-    <input
-      className="name-edit"
-      style={{ left: box.left, top: box.top, width: box.width }}
-      ref={(el) => {
-        if (el) {
-          window.setTimeout(() => {
-            if (document.body.contains(el)) {
-              el.focus();
-              armedRef.current = true;
-            }
-          }, 50);
-        }
-      }}
-      defaultValue={defaultValue}
-      onPointerDown={(e) => e.stopPropagation()}
-      onBlur={(e) => {
-        // Ignore canvas focus-steal in the first moment after mount.
-        if (Date.now() - mountedAt.current < 500) {
-          window.setTimeout(() => {
-            if (document.body.contains(e.currentTarget)) e.currentTarget.focus();
-          }, 0);
-          return;
-        }
-        onCommit(e.currentTarget.value);
-      }}
-      onKeyDown={(e) => {
-        e.stopPropagation();
-        if (e.key === "Enter") {
-          onCommit(e.currentTarget.value);
-          return;
-        }
-        if (e.key === "Escape") onCancel();
-      }}
-    />
-  );
-}
 
 const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
   {
@@ -282,6 +213,8 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
   const [selLayers, setSelLayers] = useState<string[]>([]);
   const [selGroup, setSelGroup] = useState<string | null>(null);
   const [hubs, setHubs] = useState<Hub[]>([]);
+  const [names, setNames] = useState<NameLabel[]>([]);
+  const [badges, setBadges] = useState<OrderBadge[]>([]);
   const [envelope, setEnvelope] = useState<Envelope>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const setEditingIdRef = useRef(setEditingId);
@@ -410,8 +343,31 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
   const refreshHubs = useCallback(() => {
     const editor = editorRef.current;
     if (!editor) return;
-    const pin = (_key: string, _name: string, _orderN?: number, _dim = false) => {
-      /* labels/badges are real shapes now */
+    const collected: NameLabel[] = [];
+    const orderBadges: OrderBadge[] = [];
+    /** Screen-space chips glued to the card rect every frame. */
+    const pin = (key: string, name: string, orderN?: number, dim = false) => {
+      const el = rootRef.current?.querySelector(`[data-shape-id="${imgId(key)}"]`);
+      if (!el || !rootRef.current) return;
+      const wr = rootRef.current.getBoundingClientRect();
+      const r = el.getBoundingClientRect();
+      collected.push({
+        key,
+        name,
+        x: r.left - wr.left,
+        y: r.bottom - wr.top + 2,
+        w: r.width,
+        dim,
+      });
+      if (orderN != null) {
+        orderBadges.push({
+          key,
+          n: orderN,
+          x: r.left - wr.left + 8,
+          y: r.top - wr.top + 8,
+          dim,
+        });
+      }
     };
     const entered = enteredGroupRef.current;
     if (sourceRef.current) pin("source", "原图", undefined, Boolean(entered));
@@ -457,6 +413,8 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
       chips.push({ key: g.id, x: p.x, y: p.y, groupId: g.id });
     }
     setHubs(chips);
+    setNames(collected);
+    setBadges(orderBadges);
     // Group envelope: dashed hull around members when a group is selected or open.
     const gid = enteredGroupRef.current ?? selGroupRef.current;
     if (gid && rootRef.current) {
@@ -586,8 +544,6 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
         for (const c of cards) {
           const key = c.layer ? c.layer.id : `group:${c.group!.id}`;
           track(key);
-          wantedShapes.add(labelId(key));
-          wantedShapes.add(badgeId(key));
           targets.push(key);
         }
         if (src) {
@@ -661,55 +617,6 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
           }
         };
 
-        /** Name / order chips as locked text shapes (no DOM overlay). */
-        const upsertLabel = (
-          key: string,
-          text: string,
-          x: number,
-          y: number,
-          w: number,
-          opacity: number,
-          role: "label" | "badge",
-        ) => {
-          const id = role === "label" ? labelId(key) : badgeId(key);
-          const prev = editor.getShape(id) as TLTextShape | undefined;
-          const props = {
-            color: "black" as const,
-            size: "s" as const,
-            font: "sans" as const,
-            textAlign: "middle" as const,
-            w,
-            richText: toRichText(text),
-            scale: 1,
-            autoSize: false,
-          };
-          if (!prev) {
-            editor.createShape<TLTextShape>({
-              id,
-              type: "text",
-              x,
-              y,
-              isLocked: true,
-              opacity,
-              props,
-              meta: { role, layerId: key, name: text },
-            });
-          } else {
-            // locked shapes ignore updateShape — write the record directly
-            editor.store.put([
-              {
-                ...prev,
-                x,
-                y,
-                isLocked: true,
-                opacity,
-                props: { ...prev.props, ...props },
-                meta: { role, layerId: key, name: text },
-              },
-            ]);
-          }
-        };
-
         // Source card: draggable; position kept in localStorage (not layers.json).
         // Inside isolation it is dimmed + locked like any other non-member.
         if (src) {
@@ -726,17 +633,7 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
             entered ? 0.22 : 1,
           );
           const sShape = editor.getShape(imgId("source")) as TLImageShape | undefined;
-          if (sShape) {
-            upsertLabel(
-              "source",
-              "原图",
-              sShape.x,
-              sShape.y + sShape.props.h + 6,
-              sShape.props.w,
-              entered ? 0.22 : 1,
-              "label",
-            );
-          }
+          void sShape;
         }
 
         // Rightmost edge of cards we know about, for findPlacement of unplaced items.
@@ -779,25 +676,6 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
               dim || Boolean(layer.locked),
               vis,
             );
-            const lShape = editor.getShape(imgId(layer.id)) as TLImageShape | undefined;
-            const orderN =
-              cards
-                .filter((cc) => cc.layer && !cc.dim)
-                .findIndex((cc) => cc.layer && cc.layer.id === layer.id) + 1;
-            if (lShape) {
-              upsertLabel(
-                layer.id,
-                layer.name,
-                lShape.x,
-                lShape.y + lShape.props.h + 6,
-                lShape.props.w,
-                vis,
-                "label",
-              );
-              if (!dim && orderN > 0) {
-                upsertLabel(layer.id, String(orderN), lShape.x + 8, lShape.y + 8, 36, 0.9, "badge");
-              }
-            }
             return;
           }
           const g = c.group!;
@@ -833,17 +711,7 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
             gOp,
           );
           const gShape = editor.getShape(imgId(`group:${g.id}`)) as TLImageShape | undefined;
-          if (gShape) {
-            upsertLabel(
-              `group:${g.id}`,
-              gName,
-              gShape.x,
-              gShape.y + gShape.props.h + 6,
-              gShape.props.w,
-              gOp,
-              "label",
-            );
-          }
+          void gShape;
         });
 
         // Isolation styling pass: force dim + lock on every non-member shape.
@@ -1322,28 +1190,72 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
         }}
       />
 
-      {editingId && (
-        <RenameInput
-          shapeId={labelId(editingId)}
-          rootRef={rootRef}
-          defaultValue={
-            layers.find((l) => l.id === editingId)?.name ??
-            groups.find((g) => `group:${g.id}` === editingId)?.name ??
-            ""
-          }
-          onCommit={(value) => {
-            const name = value.trim();
-            setEditingId(null);
-            if (!name || editingId === "source") return;
-            if (String(editingId).startsWith("group:")) {
-              onRenameGroup?.(String(editingId).slice(6), name);
-            } else {
-              onRename?.(editingId, name);
-            }
-          }}
-          onCancel={() => setEditingId(null)}
-        />
-      )}
+      <div className="name-layer">
+        {badges.map((b) => (
+          <div
+            key={`b-${b.key}`}
+            className={b.dim ? "order-badge dim" : "order-badge"}
+            style={{ left: b.x, top: b.y }}
+          >
+            {b.n}
+          </div>
+        ))}
+        {names.map((n) =>
+          editingId === n.key ? null : (
+            <div
+              key={n.key}
+              className={n.dim ? "name-stick dim" : "name-stick"}
+              style={{ left: n.x, top: n.y, width: n.w }}
+              onDoubleClick={(e) => {
+                e.stopPropagation();
+                if (n.key === "source") return;
+                setEditingId(n.key);
+              }}
+            >
+              {n.name}
+            </div>
+          ),
+        )}
+      </div>
+      {editingId &&
+        (() => {
+          const n = names.find((x) => x.key === editingId);
+          if (!n) return null;
+          return (
+            <input
+              key={`edit-${editingId}`}
+              className="name-edit"
+              style={{ left: n.x, top: n.y, width: n.w }}
+              autoFocus
+              defaultValue={n.name}
+              onPointerDown={(e) => e.stopPropagation()}
+              onBlur={(e) => {
+                const value = e.currentTarget.value.trim();
+                setEditingId(null);
+                if (!value || editingId === "source") return;
+                if (String(editingId).startsWith("group:")) {
+                  onRenameGroup?.(String(editingId).slice(6), value);
+                } else {
+                  onRename?.(editingId, value);
+                }
+              }}
+              onKeyDown={(e) => {
+                e.stopPropagation();
+                if (e.key === "Enter") {
+                  const value = e.currentTarget.value.trim();
+                  setEditingId(null);
+                  if (!value || editingId === "source") return;
+                  if (String(editingId).startsWith("group:")) {
+                    onRenameGroup?.(String(editingId).slice(6), value);
+                  } else {
+                    onRename?.(editingId, value);
+                  }
+                }
+                if (e.key === "Escape") setEditingId(null);
+              }}
+            />
+          );
+        })()}
       {envelope && (
         <div
           className="group-envelope"
@@ -1397,17 +1309,6 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
               </button>
               <button
                 type="button"
-                title="显示/隐藏"
-                onClick={() => {
-                  const layer = layersRef.current.find((l) => l.id === selLayers[0]);
-                  if (!layer) return;
-                  onSetFlags?.(layer.id, { visible: layer.visible === false });
-                }}
-              >
-                {layersRef.current.find((l) => l.id === selLayers[0])?.visible === false ? "○" : "●"}
-              </button>
-              <button
-                type="button"
                 title="锁定/解锁"
                 onClick={() => {
                   const layer = layersRef.current.find((l) => l.id === selLayers[0]);
@@ -1417,22 +1318,6 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
               >
                 {layersRef.current.find((l) => l.id === selLayers[0])?.locked ? "🔒" : "🔓"}
               </button>
-              <input
-                type="range"
-                className="opacity-slider"
-                title="不透明度"
-                min={0}
-                max={100}
-                value={Math.round(
-                  (layersRef.current.find((l) => l.id === selLayers[0])?.opacity ?? 1) * 100,
-                )}
-                onChange={(e) => {
-                  const id = selLayers[0];
-                  const layer = layersRef.current.find((l) => l.id === id);
-                  if (!layer) return;
-                  onSetFlags?.(id, { opacity: Number(e.currentTarget.value) / 100 });
-                }}
-              />
               <button
                 type="button"
                 title="删除此层"
