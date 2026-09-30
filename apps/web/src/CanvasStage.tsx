@@ -872,17 +872,23 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
 
           const root = editor.getContainer();
           const onDbl = (e: MouseEvent) => {
-            // Double-click a group card → enter its member layer (smart-object style).
-            const target = editor.getSelectedShapes()[0];
-            const key = target ? metaOf(target).layerId : undefined;
+            // Prefer the shape under the cursor — selection can lag one click behind.
+            const el = (e.target as HTMLElement | null)?.closest?.(
+              "[data-shape-id]",
+            ) as HTMLElement | null;
+            const sid = el?.getAttribute("data-shape-id");
+            const shape = sid
+              ? editor.getShape(sid as TLShapeId)
+              : editor.getSelectedShapes()[0];
+            const key = shape ? metaOf(shape).layerId : undefined;
             if (key && String(key).startsWith("group:")) {
+              e.preventDefault();
               e.stopPropagation();
               const gid = String(key).slice(6);
               setEnteredGroupId(gid);
               log.debug("tldraw", "enter group", { gid });
               return;
             }
-            // Rename stays on the name-stick overlay; never window.prompt.
             e.stopPropagation();
           };
           root.addEventListener("dblclick", onDbl, true);
@@ -965,6 +971,11 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
               onDoubleClick={(e) => {
                 e.stopPropagation();
                 if (n.key === "source" || n.key === "composite") return;
+                // Group label: enter the group (smart-object). Free layers: rename.
+                if (String(n.key).startsWith("group:")) {
+                  setEnteredGroupId(String(n.key).slice(6));
+                  return;
+                }
                 setEditingId(n.key);
               }}
             >
@@ -1111,7 +1122,13 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
             <div className="tool-group" data-group="action">
               <button
                 type="button"
-                className="primary icon-btn"
+                title="改名"
+                onClick={() => setEditingId(`group:${selGroup}`)}
+              >
+                ✎
+              </button>
+              <button
+                type="button"
                 title="解组"
                 onClick={() => onUngroup(selGroup)}
               >
