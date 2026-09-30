@@ -1025,11 +1025,7 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
               onDoubleClick={(e) => {
                 e.stopPropagation();
                 if (n.key === "source" || n.key === "composite") return;
-                // Group label: enter the group (smart-object). Free layers: rename.
-                if (String(n.key).startsWith("group:")) {
-                  setEnteredGroupId(String(n.key).slice(6));
-                  return;
-                }
+                // Double-click the name → rename. Enter group is double-click on the card.
                 setEditingId(n.key);
               }}
             >
@@ -1080,12 +1076,12 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
         </div>
       )}
 
-      {(selLayers.length > 0 || selGroup) && toolPos && (
+      {selLayers.length > 0 && !selGroup && toolPos && (
         <div
           className="sel-tools"
           style={{ left: toolPos.x, top: toolPos.y, transform: "translate(-50%, -100%)" }}
         >
-          {selLayers.length === 1 && !selGroup && (
+          {selLayers.length === 1 && (
             <div className="tool-group" data-group="layer">
               <button type="button" title="层序↑" onClick={() => onMoveOrder(selLayers[0], "up")}>
                 ↑
@@ -1175,29 +1171,6 @@ const CanvasStage = forwardRef<CanvasApi, Props>(function CanvasStage(
                 </button>
               </div>
             </>
-          )}
-          {selGroup && (
-            <div className="tool-group" data-group="action">
-              <button
-                type="button"
-                title="改名"
-                onClick={() => setEditingId(`group:${selGroup}`)}
-              >
-                ✎
-              </button>
-              <button
-                type="button"
-                title="解组"
-                onClick={() => onUngroup(selGroup)}
-              >
-                <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden>
-                  <rect x="2" y="2" width="5" height="5" stroke="currentColor" fill="none" />
-                  <rect x="9" y="2" width="5" height="5" stroke="currentColor" fill="none" />
-                  <rect x="2" y="9" width="5" height="5" stroke="currentColor" fill="none" />
-                  <rect x="9" y="9" width="5" height="5" stroke="currentColor" fill="none" />
-                </svg>
-              </button>
-            </div>
           )}
         </div>
       )}
