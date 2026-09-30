@@ -2,27 +2,42 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   composeProject,
   decomposeProject,
+  deleteLayer,
   exportProject,
   fileToDataUrl,
   getProject,
   groupLayers,
   listProjects,
+  renameGroup,
+  renameLayer,
   reorderLayers,
-  setGroupCollapsed,
+  saveLayout,
+  setLayerFlags,
   ungroupLayers,
+  type LayoutPatch,
 } from "./api";
-import CanvasStage, { type CanvasApi } from "./CanvasStage";
+import CanvasStage, { type CanvasApi, type LayoutItem } from "./CanvasStage";
 import DebugPanel from "./DebugPanel";
-import { FALLBACK_PROJECT } from "./fallback";
 import { log } from "./log";
 import type { Layer, ProjectPayload, ViewMode } from "./types";
 
 type Status = { kind: "ok" | "err" | "info"; text: string };
 
+/** Placeholder until the API answers. No layers ⇒ canvas does not invent geometry. */
+const EMPTY_PROJECT: ProjectPayload = {
+  id: "demo",
+  rev: 0,
+  root: "projects/demo",
+  layers: [],
+  groups: [],
+  sourceUrl: null,
+  compositeUrl: null,
+};
+
 export default function App() {
   const [view, setView] = useState<ViewMode>("canvas");
   const [projectId, setProjectId] = useState("demo");
-  const [project, setProject] = useState<ProjectPayload>(FALLBACK_PROJECT);
+  const [project, setProject] = useState<ProjectPayload>(EMPTY_PROJECT);
   const [status, setStatus] = useState<Status>({
     kind: "info",
     text: "导入原图 → 拆层 → 选中对齐/打组 → 合成",
@@ -76,6 +91,7 @@ export default function App() {
 
   const applyProject = (next: ProjectPayload) => {
     log.info("app", "applyProject", {
+      rev: next.rev,
       layers: next.layers.map((l) => `${l.id}/g=${l.groupId}/o=${l.order}`),
       groups: (next.groups || []).map((g) => `${g.id}/c=${g.collapsed}/${g.memberIds.join("+")}`),
     });
@@ -182,12 +198,32 @@ export default function App() {
     }
   };
 
-  const onToggleCollapse = async (groupId: string, collapsed: boolean) => {
+  const onRename = async (id: string, name: string) => {
+    try {
+      const data = await renameLayer(project.id, id, name);
+      applyProject(data);
+      setStatus({ kind: "ok", text: `已改名 ${name}` });
+    } catch (err) {
+      setStatus({ kind: "err", text: err instanceof Error ? err.message : String(err) });
+    }
+  };
+
+  const onRenameGroup = async (gid: string, name: string) => {
+    try {
+      const data = await renameGroup(project.id, gid, name);
+      applyProject(data);
+      setStatus({ kind: "ok", text: `组已改名 ${name}` });
+    } catch (err) {
+      setStatus({ kind: "err", text: err instanceof Error ? err.message : String(err) });
+    }
+  };
+
+  const onDelete = async (id: string) => {
     setBusy(true);
     try {
-      const data = await setGroupCollapsed(project.id, groupId, collapsed);
+      const data = await deleteLayer(project.id, id);
       applyProject(data);
-      setStatus({ kind: "ok", text: collapsed ? "已折叠组" : "已展开组" });
+      setStatus({ kind: "ok", text: "已删除一层" });
     } catch (err) {
       setStatus({ kind: "err", text: err instanceof Error ? err.message : String(err) });
     } finally {
@@ -195,13 +231,42 @@ export default function App() {
     }
   };
 
+  const onSetFlags = async (id: string, flags: { visible?: boolean; locked?: boolean }) => {
+    try {
+      const data = await setLayerFlags(project.id, id, flags);
+      applyProject(data);
+      setStatus({
+        kind: "ok",
+        text: flags.visible === false ? "已隐藏（不进合成）" : flags.visible === true ? "已显示" : flags.locked ? "已锁定" : "已解锁",
+      });
+    } catch (err) {
+      setStatus({ kind: "err", text: err instanceof Error ? err.message : String(err) });
+    }
+  };
+
+  const onSaveLayout = useCallback(async (items: LayoutItem[], groupItems: LayoutItem[]) => {
+    const toPatch = (list: LayoutItem[]): LayoutPatch[] =>
+      list.map((i) => ({ id: i.id, x: i.x, y: i.y, w: i.w, h: i.h }));
+    try {
+      const data = await saveLayout(project.id, toPatch(items), toPatch(groupItems));
+      // Quiet apply — do not spam status on every drag-end.
+      applyProject(data);
+    } catch (err) {
+      log.error("app", "saveLayout failed", String(err));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project.id]);
+
   const onCompose = async () => {
     if (!apiOk) return;
     setBusy(true);
     try {
       const data = await composeProject(project.id);
       applyProject(data);
-      setStatus({ kind: "ok", text: `已写出 ${data.output || "composite.png"}` });
+      setStatus({
+        kind: "ok",
+        text: `已合成 → 组节点预览更新（${data.output || "composite.png"}）`,
+      });
     } catch (err) {
       setStatus({ kind: "err", text: err instanceof Error ? err.message : String(err) });
     } finally {
@@ -234,7 +299,7 @@ export default function App() {
             type="button"
             className={view === "canvas" ? "on" : ""}
             onClick={() => setView("canvas")}
-            title="对齐 / 打组 / 折叠 / 拖动都在这里"
+            title="对齐 / 打组 / 拖动都在这里"
           >
             画布
           </button>
@@ -295,27 +360,19 @@ export default function App() {
         <div className="canvas-wrap">
           <CanvasStage
             ref={canvasApi}
+            projectId={project?.id ?? projectId}
             layers={layers}
             groups={project?.groups ?? []}
             sourceUrl={project?.sourceUrl ?? pendingDataUrl}
+            compositeUrl={project?.compositeUrl ?? null}
             onGroup={(ids) => void onGroup(ids)}
             onUngroup={(gid) => void onUngroup(gid)}
-            onToggleCollapse={(gid, c) => void onToggleCollapse(gid, c)}
             onMoveOrder={(id, dir) => void onMove(id, dir)}
-            onRename={(id, name) => {
-              setProject((p) => ({
-                ...p,
-                layers: p.layers.map((l) => (l.id === id ? { ...l, name } : l)),
-              }));
-              log.info("app", "rename layer", { id, name });
-            }}
-            onRenameGroup={(gid, name) => {
-              setProject((p) => ({
-                ...p,
-                groups: (p.groups || []).map((g) => (g.id === gid ? { ...g, name } : g)),
-              }));
-              log.info("app", "rename group", { gid, name });
-            }}
+            onRename={(id, name) => void onRename(id, name)}
+            onRenameGroup={(gid, name) => void onRenameGroup(gid, name)}
+            onDeleteLayer={(id) => void onDelete(id)}
+            onSetFlags={(id, flags) => void onSetFlags(id, flags)}
+            onSaveLayout={(ls, gs) => void onSaveLayout(ls, gs)}
           />
         </div>
 
@@ -376,19 +433,25 @@ export default function App() {
                   const members = layers.filter((l) => l.groupId === g.id);
                   return (
                     <div key={g.id} className="map-group-block">
-                      <div className="map-node group-node">
+                      <div
+                        className="map-node group-node clickable"
+                        onClick={() => canvasApi.current?.selectLayer(`group:${g.id}`)}
+                      >
                         <span className="map-tag">组</span>
                         <div>
                           <div className="layer-name">{g.name}</div>
                           <div className="layer-meta">
-                            {g.id} · order={g.order} ·{" "}
-                            {g.collapsed ? "折叠" : "展开"} · {members.length} 成员
+                            {g.id} · order={g.order} · {members.length} 成员
                           </div>
                         </div>
                       </div>
                       <div className="map-children">
                         {members.map((m) => (
-                          <div key={m.id} className="map-node child-node">
+                          <div
+                            key={m.id}
+                            className="map-node child-node clickable"
+                            onClick={() => canvasApi.current?.selectLayer(m.id)}
+                          >
                             <div
                               className="thumb"
                               style={{ backgroundImage: `url(${m.url})` }}
@@ -397,6 +460,8 @@ export default function App() {
                               <div className="layer-name">{m.name}</div>
                               <div className="layer-meta">
                                 {m.id} · order={m.order}
+                                {m.visible === false ? " · 隐藏" : ""}
+                                {m.locked ? " · 锁定" : ""}
                               </div>
                             </div>
                           </div>
@@ -409,12 +474,18 @@ export default function App() {
                 {layers
                   .filter((l) => !l.groupId)
                   .map((layer) => (
-                    <div key={layer.id} className="map-node layer-node">
+                    <div
+                      key={layer.id}
+                      className="map-node layer-node clickable"
+                      onClick={() => canvasApi.current?.selectLayer(layer.id)}
+                    >
                       <div className="thumb" style={{ backgroundImage: `url(${layer.url})` }} />
                       <div>
                         <div className="layer-name">{layer.name}</div>
                         <div className="layer-meta">
                           {layer.id} · order={layer.order} · 独立层
+                          {layer.visible === false ? " · 隐藏" : ""}
+                          {layer.locked ? " · 锁定" : ""}
                         </div>
                       </div>
                     </div>
@@ -424,7 +495,7 @@ export default function App() {
             <div className="groups-foot">
               映射：原图 → 组 → 图层（与 layers.json 一致）
               <br />
-              对齐 / 打组 / 解组 / 折叠 展开 都在「画布」操作
+              位置影响排版，不影响合成输出（见 layers.json 注释）
             </div>
           </aside>
         )}

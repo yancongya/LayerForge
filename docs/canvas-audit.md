@@ -414,41 +414,50 @@ app 级 undo/redo 事务化 · 单选/多选浮动工具条与尺寸读数 · �
 
 ## 10. P0 实施进度与续做清单（中断点快照）
 
-> 本轮只做到 **P0-B1 的真源与后端切片**就中断。前端未动，因此当前提交的画布行为仍是旧的（摆位仍会被刷回、原生右键/快捷键仍开放）。下次从 §10.3 第 1 条接着做。
+> **P0-B0 + P0-B1 前端 + F4（按产品反馈调整）已完成。** 后端 v3 切片见下表。剩余为 backlog / 验收收尾。
 
 ### 10.1 已完成
 
 | 文件 | 内容 |
 | --- | --- |
-| `packages/layer-core/layer_core/layers.py` | schema **v3**：`Layer` 增 `x/y/w/h/imgW/imgH/visible/locked`，`LayerGroup` 增 `x/y/w/h/imgW/imgH`，`ProjectLayers` 增 `rev`；`save_layers_document` 每次写自增 `rev`；v1/v2 兼容读取；新纯函数 `rename_layer` / `rename_group` / `delete_layer`（重排 order + 解散 <2 成员的组）/ `set_layer_flags` / `apply_layout`（只改几何，未知 id 报错）/ `card_size`（按图片比例算卡）/ `visible_layers`；`group_layers` 给组卡落位（= 成员包围盒左上，封面取**最底层**成员，与画布一致）；`load_layers_document` 对 legacy 文件**测量并回填** `imgW/imgH`（只读、不落盘、不覆盖已有 `w/h`） |
-| `packages/layer-core/layer_core/compose.py` | 改读 `visible_layers()` → **`visible=false` 的层确实不进合成**；无可见层时报错 |
-| `packages/layer-core/layer_core/decompose.py` | 拆层时写真实 `imgW/imgH` + 顶行排布（`_place_cards`，抄 `designjs:findPlacement`：`y` 钉 0、`x` = 前一张右缘 + 80）；重拆**不回退 `rev`** |
-| `packages/layer-core/layer_core/cli.py` | 新子命令 `rename` / `rename-group` / `delete` / `flag --visible --locked` / `layout '<json>'`；`_doc_payload` 改用 `asdict` 自动带新字段 |
-| `apps/web/vite-plugin-layerforge-api.ts` | 新路由 `POST …/rename`、`…/rename-group`、`…/delete`、`…/flag`、`…/layout`（沿用既有 POST+action 风格）；路由正则放宽到 `[a-z][a-z-]*` 以支持带连字符的 action；payload 带 `rev`；**layer url 加 `?v=<rev>`（解 F5）**，source/composite 保留 `?ts=` |
-| `apps/web/src/types.ts` `src/fallback.ts` | `Layer`/`LayerGroup` 增可选 v3 字段，`ProjectPayload` 增 `rev` |
-| `.p0-layercore-check.py` | 回归脚本（临时放仓库根，下次可移到 `packages/layer-core/scripts/`） |
+| `packages/layer-core/layer_core/layers.py` | schema **v3**：`Layer` 增 `x/y/w/h/imgW/imgH/visible/locked`，`LayerGroup` 增 `x/y/w/h/imgW/imgH`，`ProjectLayers` 增 `rev`；`save_layers_document` 每次写自增 `rev`；v1/v2 兼容读取；`rename_layer` / `rename_group` / `delete_layer` / `set_layer_flags` / `apply_layout` / `card_size` / `visible_layers`；`group_layers` 组卡几何；legacy 测量回填 `imgW/imgH` |
+| `packages/layer-core/layer_core/compose.py` | `visible=false` 不进合成 |
+| `packages/layer-core/layer_core/decompose.py` | 真实 `imgW/imgH` + 顶行排布；重拆不回退 `rev` |
+| `packages/layer-core/layer_core/cli.py` | `rename` / `rename-group` / `delete` / `flag` / `layout` |
+| `apps/web/vite-plugin-layerforge-api.ts` | `POST rename / rename-group / delete / flag / layout`；payload 带 `rev`；layer url `?v=<rev>`（F5） |
+| `apps/web/src/api.ts` | `renameLayer/renameGroup/deleteLayer/setLayerFlags/saveLayout` |
+| `apps/web/src/App.tsx` | 改名/删除/可见性/锁定/落位全部走 API（F2）；组映射行 `onClick → selectLayer`；初始 `EMPTY_PROJECT`（避免 fallback 在 API 返回前写回假几何）；合成状态提示 |
+| `apps/web/src/CanvasStage.tsx` | **P0-B0**：`uiOverrides.actions` 裁掉原生可变动作（快捷键随 action 消失）；**白名单形状对账**（只留 source/层卡/组卡/连线，清未引用 asset）；`registerExternalContentHandler` 拒收 drop/paste；`onToggleCollapse` 整链删除；`ImageToolbar/VideoToolbar/RichTextToolbar` 置空——**唯一工具条 = 选中浮条 `sel-tools`**（层序/可见/锁定/删除/对齐/打组/解组）<br>**P0-B1**：去 `forcePos`，按 `x/y/w/h` 落位（未落位 `findPlacement` 并写回一次）；asset 按 `imgW/imgH`；拖拽 `pointerup` + 250ms 防抖 `POST /layout`（带 lastSaved 去重，防 applyProject 环）；改名走内联 `name-stick` 双击（**无 `window.prompt`**）；相机 `localStorage` 按 `projectId` 分键（**不用 `persistenceKey`**）<br>**F4（产品调整）**：**不做独立「合成预览」卡**。点「合成」后预览落在**组卡**（封面换 `compositeUrl`，名字后缀「· 合成预览」）；无组时只写 `composite.png` 供导出。原图卡 `isLocked` |
+| `.p0-canvas-check.mjs` | Playwright 前端验收（见 10.2） |
+| `.p0-layercore-check.py` | 后端回归 |
+
+**tldraw 5.4.2 取证补充（本轮踩坑）**
+
+- **`components.ContextMenu` 不可设为 `() => null`**：默认 `DefaultContextMenu` 的 Trigger **包着 `<Canvas />`**（`Tldraw.js` → `InsideOfEditorAndUiContext` 优先渲染 ContextMenu）。置空 = 画布整块消失、shape 只在 store 不进 DOM。收口只删 `actions`，让菜单项自动变 null。
+- `ImageToolbar` 是独立浮条（裁剪/ALT），与自绘 `sel-tools` 叠出双工具条 → 置空 Image/Video/RichText 浮条，功能并进 `sel-tools`。
+- 首屏若用 fallback 假 layers 跑 `syncGraph`，会把 `findPlacement` 写回并覆盖用户拖好的 `x/y`。App 必须空项目启动，等 API。
 
 ### 10.2 已验证
 
-- `python .p0-layercore-check.py` → **PASS 9/9**：v2→v3 升级与 rename 落盘 / rev 单调 + flag 落盘 / **visible=false 时合成确实少一层** / layout 落盘且**不影响合成** / layout 未知 id 报错 / 组卡带几何且成员几何不被销毁、解组原位复原 / delete 重排 order + 解散小组 / decompose 真实比例 + 顶行排布 / **960×960 源图 → 280×280 卡（不再拉伸）**。脚本在临时副本上跑，不碰 `projects/demo`。
-- `npx tsc --noEmit -p apps/web/tsconfig.json` → 干净（`npm run build` 用的就是它）。
-- ⚠️ 既有状况（非本次引入）：`tsconfig.node.json` 因缺 `@types/node` 一直报 `node:fs`/`process` 等错，但它不在 build 路径里。
+- `python F:/LayerForge/.p0-layercore-check.py` → **PASS 9/9**（需先 `git restore projects/demo/layers.json` 保证 v2 源文件；验收会改 demo）。
+- `npx tsc --noEmit -p apps/web/tsconfig.json` → 干净；`npm run build` 通过。
+- `.p0-canvas-check.mjs`（dev server + Playwright）→ **7/7**：
+  1. 拖位持久（拖 → 改名 → 切组映射 → 回画布 → 刷新，坐标保持；`layers.json` 有新 x/y）
+  2. Ctrl+D / Ctrl+G / Ctrl+A+Delete 无僵尸卡、无影子组、无独立合成卡
+  3. 单一工具条（`sel-tools=1`，无 ImageToolbar）；删除落盘
+  4. 打组后点「合成」→ 组卡名「… · 合成预览」，无浮动合成卡
+  5. 卡片比例 = 图片比例
+  - 另：改名落盘（`layers.json` name 变更）
+- ⚠️ 既有：`tsconfig.node.json` 缺 `@types/node` 不在 build 路径。
 
-### 10.3 未完成（按依赖顺序）
+### 10.3 未完成 / 有意延后
 
-1. **P0-B0 收口**（前端，最先）
-   - `uiOverrides` 增 `actions` 覆写：删掉原生可变动作 → **同时**裁掉其快捷键、**同时**自动裁剪原生右键菜单（`TldrawUiMenuActionItem` 找不到 action 时返回 `null`）。已取证：5.4.2 的 `TLUiOverrides` **只有 `{actions, tools, translations}`，没有 `shortcuts` 覆写口**；快捷键由 `useKeyboardShortcuts.js:66-74` 从 `actions` 的 `kbd` 派生 → 删 action 即删快捷键。**不要自写 ContextMenu 组件。**
-   - 待删 action id（已从 `lib/ui/context/actions.js` 全量核对）：`group ungroup duplicate delete copy cut paste paste-at-cursor paste-plain-text-at-cursor toggle-paste-at-cursor insert-media insert-embed image-replace video-replace bring-to-front bring-forward send-backward send-to-back toggle-lock unlock-all align-left align-right align-top align-bottom align-center-horizontal align-center-vertical distribute-horizontal distribute-vertical stack-horizontal stack-vertical stretch-horizontal stretch-vertical pack frame-selection fit-frame-to-content move-to-new-page flatten-to-image flip-horizontal flip-vertical rotate-cw rotate-ccw adjust-shape-styles enlarge-shapes shrink-shapes edit-link convert-to-bookmark convert-to-embed open-embed-link undo redo open-cursor-chat stop-following toggle-auto-size`
-   - 保留（纯选择/视口/偏好/只读导出）：`select-all select-none zoom-in zoom-out zoom-to-fit zoom-to-100 zoom-to-selection toggle-grid toggle-snap-mode toggle-invert-zoom toggle-wrap-mode toggle-edge-scrolling toggle-focus-mode toggle-dark-mode toggle-reduce-motion toggle-dynamic-size-mode a11y-* back-to-content change-page-next change-page-prev copy-as-png copy-as-svg copy-as-json export-as-png export-as-svg download-original print`
-   - **僵尸卡治理改为白名单形状对账**：`syncGraph` 现在只删"它认识的"shape（`CanvasStage.tsx:210-229`，还带着恒等式 `normalized` 三元这处半成品）。改成**删除所有非托管 shape 与未被引用的 asset**（托管集 = source 卡 / 层卡 / 组卡 / 连线 / 合成预览卡），一次干掉 paste、drop、duplicate 全类孤儿。
-   - 接上 `selectLayer`（`App.tsx` 组映射行 `onClick` → `canvasApi.current?.selectLayer(id)`）；`onToggleCollapse` **接线或整链删除**（现仍 `CanvasStage.tsx:113 void`）。
-2. **P0-B1 前端**：`api.ts` 补 `renameLayer/renameGroup/deleteLayer/setLayerFlags/saveLayout`；`App.tsx` 把改名/删除/可见性改为走 API（**现在仍是 `setProject` 内存改，F2 未解**）；`CanvasStage.tsx` 去 `forcePos`、按 `x/y/w/h` 落位、按 `imgW/imgH` 建 asset、拖拽结束 250ms 防抖写 layout、改名走内联输入（**删掉 `:478-498` 的 `window.prompt` 路径**）、相机恢复。
-   - 相机持久化**不用** `persistenceKey`：它会把整份 tldraw 文档快照写进 IndexedDB，等于再造一个真源。改为自存 `editor.getCamera()` → localStorage（按 projectId 分键）、mount 时 `setCamera`。这是对 §4.1a 括号的有意偏离。
-   - 原图卡与合成预览卡设 `isLocked: true` 不可拖（派生对象不必另存位置），层卡与组卡可拖并落盘。
-3. **P0 同步项**：`compositeUrl` 渲染成画布上的合成预览卡（`App.tsx` 目前从不使用它，F4 未解）；`visible/locked` 控件（建议放单选浮条，两个小按钮）。
-4. **验收**：跑 §9 的 5 条；建议加一个 `.p0-canvas-check.cjs` 离屏 Electron 截图断言。
+1. **产品已否决项（勿做回）**：独立「合成预览」节点（F4 原稿）→ 已改为组卡预览；`window.prompt` 改名；`persistenceKey` 相机；双工具条。
+2. **mock 拆层保真度**：合成结果 ≠ 原图是 `mock_decompose` 的程序化分层（色条/灰洗/高光）所致，不是 compose bug。真模型接入前不要当回归失败去“修”合成。
+3. **per-group compose**：目前组卡预览用的是**全项目** `composite.png`；多组时各组卡都会显示同一张全项目合成。要每组独立预览需 compose 支持按成员 id 过滤（新 CLI/路由）→ 先进 §5 backlog。
+4. **其余 P1**：见 §5「P1 及以后」（历史轨、composer、多页面、blend/mask…）。
 
-### 10.4 后端路由速查（下次直接用）
+### 10.4 后端路由速查
 
 ```text
 POST /api/projects/:id/rename        {id, name}

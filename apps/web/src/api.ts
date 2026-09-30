@@ -91,6 +91,51 @@ export function decomposeProject(
   });
 }
 
+export function renameLayer(id: string, layerId: string, name: string) {
+  return request<ProjectPayload>(`/api/projects/${encodeURIComponent(id)}/rename`, {
+    method: "POST",
+    body: JSON.stringify({ id: layerId, name }),
+  });
+}
+
+export function renameGroup(id: string, groupId: string, name: string) {
+  return request<ProjectPayload>(`/api/projects/${encodeURIComponent(id)}/rename-group`, {
+    method: "POST",
+    body: JSON.stringify({ group_id: groupId, name }),
+  });
+}
+
+export function deleteLayer(id: string, layerId: string) {
+  return request<ProjectPayload>(`/api/projects/${encodeURIComponent(id)}/delete`, {
+    method: "POST",
+    body: JSON.stringify({ id: layerId }),
+  });
+}
+
+export function setLayerFlags(
+  id: string,
+  layerId: string,
+  flags: { visible?: boolean; locked?: boolean },
+) {
+  return request<ProjectPayload>(`/api/projects/${encodeURIComponent(id)}/flag`, {
+    method: "POST",
+    body: JSON.stringify({ id: layerId, ...flags }),
+  });
+}
+
+export type LayoutPatch = { id: string; x: number; y: number; w?: number; h?: number };
+
+export function saveLayout(
+  id: string,
+  layers: LayoutPatch[],
+  groups: LayoutPatch[] = [],
+) {
+  return request<ProjectPayload>(`/api/projects/${encodeURIComponent(id)}/layout`, {
+    method: "POST",
+    body: JSON.stringify({ layers, groups }),
+  });
+}
+
 export function fileToDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
