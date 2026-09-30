@@ -132,6 +132,28 @@ export default function App() {
     };
   }, [acceptFile]);
 
+  // Ctrl+wheel over UI chrome must not browser-zoom the page; canvas zoom stays in tldraw.
+  useEffect(() => {
+    const onWheel = (e: WheelEvent) => {
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      if (e.key === "=" || e.key === "+" || e.key === "-" || e.key === "_") {
+        e.preventDefault();
+      }
+    };
+    // passive:false is required for preventDefault on wheel; capture wins over UI handlers.
+    window.addEventListener("wheel", onWheel, { passive: false, capture: true });
+    window.addEventListener("keydown", onKey, true);
+    return () => {
+      window.removeEventListener("wheel", onWheel, { capture: true });
+      window.removeEventListener("keydown", onKey, true);
+    };
+  }, []);
+
   const onDecompose = async () => {
     if (!apiOk) return;
     setBusy(true);
