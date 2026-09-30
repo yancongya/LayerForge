@@ -1,0 +1,19 @@
+﻿# deps & build
+node_modules/
+apps/web/node_modules/
+apps/web/dist/
+dist/
+assets/
+
+# cloned references (large third-party checkouts)
+reference/
+
+# runtime
+logs/
+*.log
+.DS_Store
+
+# generated project outputs
+projects/*/dist/
+projects/*/dist-mcp/
+projects/*/composite.png
