@@ -9,7 +9,8 @@
       "base_url": "http://127.0.0.1:8000",
       "api_key_env": "LAYERFORGE_API_KEY",
       "endpoint": "/decompose",
-      "timeout_s": 120
+      "timeout_s": 120.0,
+      "headers": {}
     },
     "local/qwen-layered": {
       "kind": "local",
