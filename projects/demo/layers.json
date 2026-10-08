@@ -1,26 +1,54 @@
 {
-  "version": 2,
+  "version": 3,
+  "rev": 1,
   "layers": [
     {
       "id": "base",
       "name": "Base",
       "file": "layers/base.png",
       "order": 0,
-      "groupId": null
+      "groupId": null,
+      "x": 0.0,
+      "y": 0.0,
+      "w": 280.0,
+      "h": 373.0,
+      "imgW": 720,
+      "imgH": 960,
+      "visible": true,
+      "locked": false,
+      "opacity": 1.0
     },
     {
       "id": "mid",
       "name": "Wash",
       "file": "layers/mid.png",
       "order": 1,
-      "groupId": null
+      "groupId": null,
+      "x": 360.0,
+      "y": 0.0,
+      "w": 280.0,
+      "h": 373.0,
+      "imgW": 720,
+      "imgH": 960,
+      "visible": true,
+      "locked": false,
+      "opacity": 1.0
     },
     {
       "id": "fg",
       "name": "Highlights",
       "file": "layers/fg.png",
       "order": 2,
-      "groupId": null
+      "groupId": null,
+      "x": 720.0,
+      "y": 0.0,
+      "w": 280.0,
+      "h": 373.0,
+      "imgW": 720,
+      "imgH": 960,
+      "visible": true,
+      "locked": false,
+      "opacity": 1.0
     }
   ],
   "groups": []
