@@ -16,7 +16,11 @@ logs/
 # python + scratch
 __pycache__/
 *.pyc
-.tmp-lf-test/
+.tmp-*/
+.p0-debug.*
+.p0-*.png
+.p0-css-patch.py
+.p0-agent-smoke-report.md
 
 # generated project outputs
 projects/*/dist/
