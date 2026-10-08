@@ -16,7 +16,7 @@ logs/
 # python + scratch
 __pycache__/
 *.pyc
-.tmp-*/
+.tmp-*
 .p0-debug.*
 .p0-*.png
 .p0-css-patch.py
